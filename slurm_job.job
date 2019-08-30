@@ -1,0 +1,5 @@
+#!/bin/bash
+#SBATCH -p sciama4.q
+#SBATCH --job-name=HBM_pa_pymc3
+source ~/modules
+python test_on_toy_model.py
