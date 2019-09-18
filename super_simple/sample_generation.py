@@ -1,11 +1,13 @@
 import numpy as np
 import scipy.stats as st
-
+from scipy.optimize import minimize
+from sklearn.metrics import mean_squared_error
 base_t = np.linspace(0, np.pi, 500)
 
 
-def log_spiral(t, phi):
-    return np.exp(np.tan(np.deg2rad(phi)) * t)
+def log_spiral(t, phi, c=0):
+    # r = exp(tan(phi) * t + c)
+    return np.exp(np.tan(np.deg2rad(phi)) * t + c)
 
 
 def gen_noisy_arm(phi, N=500, t_offset=None,
@@ -16,12 +18,12 @@ def gen_noisy_arm(phi, N=500, t_offset=None,
         t_offset = np.random.random() * 2 * np.pi
 
     t_noise = np.random.normal(loc=0, scale=t_noise_amp, size=t.shape)
-    r_noise = np.random.normal(loc=0, scale=r.max() * r_noise_amp,
+    r_noise = np.random.normal(loc=0, scale=r_noise_amp,
                                size=r.shape)
 
     T = t + t_offset + t_noise
-    R = r + r_noise
-    return T, R
+    R = r / r.max() + r_noise
+    return T[R > 0.1], R[R > 0.1]
 
 
 def gen_galaxy(n_arms, pa, sigma_pa, pa_bounds=(0.1, 60), **kwargs):
@@ -35,3 +37,14 @@ def gen_galaxy(n_arms, pa, sigma_pa, pa_bounds=(0.1, 60), **kwargs):
         )
         for i in range(n_arms)
     ]
+
+
+def fit_log_spiral(t, r):
+    def _f(p):
+        R = log_spiral(t, p[0])*np.exp(p[1])
+        return mean_squared_error(r, R)
+
+    res = minimize(_f, (20, 0))
+    if not res['success']:
+        return np.nan, np.nan
+    return res['x']
