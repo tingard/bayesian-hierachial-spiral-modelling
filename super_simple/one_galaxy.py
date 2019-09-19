@@ -45,8 +45,13 @@ print(gal_separate_fit_params.describe())
 with pm.Model() as model:
     # model r = a * exp(tan(phi) * t) as log(r) = b * t + c,
     # but have a uniform prior on phi rather than the gradient!
-    gal_pa_mu = pm.Normal('pa', mu=15, sd=1)  # pm.Uniform('pa', lower=0.00, upper=1, testval=20 / 90) * 90
-    gal_pa_sd = pm.HalfCauchy('pa_sd', beta=1, testval=0.1)
+    gal_pa_mu = pm.TruncatedNormal(
+        'pa',
+        mu=15, sd=10,
+        lower=0, upper=45,
+        testval=10,
+    )
+    gal_pa_sd = pm.HalfCauchy('pa_sd', beta=10, testval=0.1)
     arm_c = pm.Uniform(
         'c',
         lower=-1, upper=0,
@@ -99,7 +104,7 @@ with model:
     print(model.check_test_point())
 
 with model:
-    trace = pm.sample(2000, tune=2000, target_accept=0.95)
+    trace = pm.sample(500, tune=500, target_accept=0.95, init='advi+adapt_diag')
 
 # display the total number and percentage of divergent
 divergent = trace['diverging']

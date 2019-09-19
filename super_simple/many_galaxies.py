@@ -19,9 +19,9 @@ parser = argparse.ArgumentParser(
 )
 parser.add_argument('--ngals', '-n', metavar='N', default=25,
                     type=int, help='Number of galaxies in sample')
-parser.add_argument('--mu', metavar='N', default=15,
+parser.add_argument('--mu', metavar='N', default=20,
                     type=str, help='Global mean pitch angle')
-parser.add_argument('--sd', metavar='N', default=10,
+parser.add_argument('--sd', metavar='N', default=5,
                     type=str, help='Inter-galaxy pitch angle std')
 parser.add_argument('--sd2', metavar='N', default=10,
                     type=str, help='Intra-galaxy pitch angle std')
@@ -93,7 +93,7 @@ with pm.Model() as model:
     # Global mean pitch angle
     global_pa_mu = pm.Uniform(
         'pa',
-        lower=0.01, upper=60,
+        lower=0.01, upper=90,
         testval=10
     )
 
@@ -145,8 +145,8 @@ with model:
     pm.Potential(
         'gal_pa_mu_bound',
         (
-            tt.switch(tt.all(gal_pa_mu > 0.1), 0, -np.inf)
-            + tt.switch(tt.all(gal_pa_mu < 70), 0, -np.inf)
+            tt.switch(tt.all(gal_pa_mu > 0), 0, -np.inf)
+            + tt.switch(tt.all(gal_pa_mu < 90), 0, -np.inf)
         )
     )
 
@@ -162,17 +162,17 @@ with model:
     pm.Potential(
         'arm_pa_mu_bound',
         (
-            tt.switch(tt.all(arm_pa > 0.1), 0, -np.inf)
-            + tt.switch(tt.all(arm_pa < 70), 0, -np.inf)
+            tt.switch(tt.all(arm_pa > 0), 0, -np.inf)
+            + tt.switch(tt.all(arm_pa < 90), 0, -np.inf)
         )
     )
 
     # convert to a gradient for a linear fit
-    arm_b = pm.Deterministic('b', tt.tan(np.pi / 180 * arm_pa))
+    arm_b = tt.tan(np.pi / 180 * arm_pa)
     arm_r = tt.exp(arm_b[arm_idx] * T + arm_c[arm_idx])
     pm.Potential(
         'arm_r_bound',
-        tt.switch(tt.all(arm_r < 1E3), 0, -np.inf)
+        tt.switch(tt.all(arm_r < 1E4), 0, -np.inf)
     )
     # likelihood function
     likelihood = pm.Normal(
@@ -189,11 +189,8 @@ with model:
 
 # Sampling
 with model:
-    trace = pm.sample(
-        1000,
-        tune=1000,
-        target_accept=0.95,
-    )
+    trace = pm.sample(1000, tune=1000, target_accept=0.9,
+                      init='advi+adapt_diag')
 
     # Save the model
     try:
@@ -206,11 +203,13 @@ with model:
     except ImportError:
         pass
 
+print('Trace Summary:')
+print(pm.summary(trace).round(2).sort_values(by='Rhat', ascending=False))
+
 # Save a traceplot
 pm.traceplot(
     trace,
-    var_names=('pa', 'pa_sd', 'sigma'),
-    combined=True,
+    var_names=('pa', 'pa_sd', 'gal_pa_sd', 'sigma'),
     lines=(
         ('pa', {}, BASE_PA),
         ('pa_sd', {}, INTER_GAL_SD),
@@ -224,7 +223,7 @@ plt.savefig(
 plt.close()
 
 # Save a posterior plot
-pm.plot_posterior(trace, var_names=('pa', 'pa_sd', 'sigma'))
+pm.plot_posterior(trace, var_names=('pa', 'pa_sd', 'gal_pa_sd', 'sigma'))
 plt.savefig(
     os.path.join(loc, 'plots/many_galaxies_posterior.png'),
     bbox_inches='tight'
@@ -254,7 +253,7 @@ plt.savefig(
 # make a plot showing arm predictions
 with model:
     param_predictions = pm.sample_posterior_predictive(
-        trace, samples=30,
+        trace, samples=50,
         vars=(arm_pa, arm_c)
     )
 pred_pa = param_predictions['arm_pa']
@@ -263,28 +262,28 @@ pred_c = param_predictions['c']
 f, axs_grid = plt.subplots(
     ncols=s, nrows=s,
     sharex=True, sharey=True,
-    figsize=(8, 8), dpi=100
+    figsize=(16, 16), dpi=100
 )
 axs = [j for i in axs_grid for j in i]
+for j in range(sum(gal_n_arms)):
+    t = T[arm_idx == j]
+    r = R[arm_idx == j]
+    axs[gal_arm_map[j]].plot(
+        *xy_from_r_theta(r, t),
+        'k.',
+    )
 for i in range(len(param_predictions)):
     arm_pa = pred_pa[i]
     arm_c = pred_c[i]
     arm_b = np.tan(np.deg2rad(arm_pa))
     for j in range(len(arm_pa)):
         t = T[arm_idx == j]
-        r = R[arm_idx == j]
         r_pred = np.exp(arm_b[j] * t + arm_c[j])
-        axs[gal_arm_map[j]].plot(
-            *xy_from_r_theta(r, t),
-            'k--',
-            alpha=0.5,
-            linewidth=1,
-        )
         axs[gal_arm_map[j]].plot(
             *xy_from_r_theta(r_pred, t),
             c='C{}'.format(j % 10),
-            alpha=0.5,
-            linewidth=3,
+            alpha=0.7,
+            linewidth=1,
         )
 
 plt.savefig(
