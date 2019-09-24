@@ -1,70 +1,39 @@
+import sys
 import os
 import numpy as np
 import pandas as pd
-import scipy.stats as st
+# import scipy.stats as st
 import pymc3 as pm
 import theano.tensor as tt
 import matplotlib.pyplot as plt
 from gzbuilder_analysis.spirals import xy_from_r_theta
-import sample_generation as sg
-import argparse
+import super_simple.sample_generation as sg
+# import argparse
 from tqdm import tqdm
 
+agg_results = pd.read_pickle('lib/aggregation_results.pickle')
 
-loc = os.path.abspath(os.path.dirname(__file__))
-parser = argparse.ArgumentParser(
-    description=(
-        'Fit Aggregate model and best individual'
-        ' model for a galaxy builder subject'
-    )
-)
-parser.add_argument('--ngals', '-n', metavar='N', default=25,
-                    type=int, help='Number of galaxies in sample')
-parser.add_argument('--mu', metavar='N', default=20,
-                    type=str, help='Global mean pitch angle')
-parser.add_argument('--sd', metavar='N', default=5,
-                    type=str, help='Inter-galaxy pitch angle std')
-parser.add_argument('--sd2', metavar='N', default=10,
-                    type=str, help='Intra-galaxy pitch angle std')
+sid_list = agg_results.index.values
 
-args = parser.parse_args()
+galaxies = [
+    [
+        np.array((arm.t * arm.chirality, arm.R))
+        for arm in galaxy
+    ]
+    for galaxy in agg_results.Arms.values
+    if len(galaxy) > 1
+]
 
-# Base parameter definition
-N_GALS = args.ngals
-BASE_PA = args.mu
-INTER_GAL_SD = args.sd
-INTRA_GAL_SD = args.sd2
-N_POINTS = 100
-PA_LIMS = (0.1, 60)
+# reduce the sample size for testing purposes
+np.random.seed(0)
+galaxies = np.array(galaxies)[
+    np.random.choice(np.arange(len(galaxies)), size=25, replace=False)
+]
 
-print((
-    'Making sample of {} galaxies with global mean pa {:.2f}'
-    '\nInter-galaxy pitch angle std: {:.2e}'
-    '\nIntra-galaxy pitch angle std: {:.2e}'
-).format(N_GALS, BASE_PA, INTER_GAL_SD, INTRA_GAL_SD))
-
-gal_pas = st.truncnorm.rvs(*PA_LIMS, loc=BASE_PA, scale=INTER_GAL_SD,
-                           size=N_GALS)
-gal_n_arms = [np.random.poisson(0.75) + 2 for i in range(N_GALS)]
-
-print('Input galaxies:')
-print(pd.DataFrame({
-    'Pitch angle': gal_pas,
-    'Arm number': gal_n_arms
-}).describe())
-
-# map from arm to galaxy (so gal_arm_map[5] = 3 means the 5th arm is from the
-# 3rd galaxy)
+gal_n_arms = [len(g) for g in galaxies]
 gal_arm_map = np.concatenate([
     np.tile(i, n) for i, n in enumerate(gal_n_arms)
 ])
-
-# Generate our galaxies
-galaxies = [
-    sg.gen_galaxy(gal_n_arms[i], gal_pas[i], INTRA_GAL_SD, N=N_POINTS)
-    for i in range(N_GALS)
-]
-
 # Create an array containing needed information in a stacked form
 point_data = np.concatenate([
     np.stack((
@@ -77,12 +46,66 @@ point_data = np.concatenate([
     for arm_n, (arm_T, arm_R) in enumerate(galaxy)
 ])
 
+# scale R from 0 to 1
+point_data[:, 1] /= np.max(point_data[:, 1])
+
+# mask out low values of R
+r_lower_bound_mask = point_data[:, 1] > 0.05
+point_data = point_data[r_lower_bound_mask]
+
 T, R, arm_idx, gal_idx = point_data.T
+print(pd.Series(R).describe())
+
 arm_idx = arm_idx.astype(int)
 
 # ensure the arm indexing makes sense
 assert np.all((np.unique(arm_idx) - np.arange(sum(gal_n_arms))) == 0)
 
+print('{} Galaxies'.format(len(galaxies)))
+print('Mean of {} arms per galaxy'.format(np.mean([len(g) for g in galaxies])))
+print('Median of {} arms per galaxy'.format(
+    np.median([len(g) for g in galaxies])
+))
+print('{} arms in total'.format(sum(gal_n_arms)))
+print('{} data points'.format(len(R)))
+
+loc = os.path.abspath(os.path.dirname(__file__))
+N_GALS = len(galaxies)
+
+gal_separate_fit_params = pd.Series([])
+with tqdm([galaxy for galaxy in galaxies]) as bar:
+    for i, gal in enumerate(bar):
+        gal_separate_fit_params.loc[i] = [
+            sg.fit_log_spiral(*arm)
+            for arm in gal
+        ]
+arm_separate_fit_params = pd.DataFrame(
+    [j for _, i in gal_separate_fit_params.items() for j in i],
+    columns=('pa', 'c')
+)
+
+print(arm_separate_fit_params.describe())
+
+# plot all the "galaxies" used
+s = int(np.ceil(np.sqrt(N_GALS)))
+f, axs_grid = plt.subplots(
+    ncols=s, nrows=s,
+    sharex=True, sharey=True,
+    figsize=(8, 8), dpi=100
+)
+axs = [j for i in axs_grid for j in i]
+for i, ax in enumerate(axs):
+    plt.sca(ax)
+    try:
+        for arm in galaxies[i]:
+            plt.plot(*xy_from_r_theta(arm[1], arm[0]), '.', markersize=1)
+    except IndexError:
+        pass
+plt.savefig(
+    os.path.join(loc, 'plots/sample.png'),
+    bbox_inches='tight'
+)
+# sys.exit(0)
 # Define Stochastic variables
 with pm.Model() as model:
     # model r = a * exp(tan(phi) * t) + sigma as r = exp(b * t + c) + sigma,
@@ -99,10 +122,10 @@ with pm.Model() as model:
     )
 
     # inter-galaxy dispersion
-    global_pa_sd = pm.InverseGamma('pa_sd', alpha=1, beta=3)
+    global_pa_sd = pm.InverseGamma('pa_sd', alpha=1, beta=5)
 
     # intra-galaxy dispersion
-    gal_pa_sd = pm.InverseGamma('gal_pa_sd', alpha=1, beta=3)
+    gal_pa_sd = pm.InverseGamma('gal_pa_sd', alpha=1, beta=5)
 
     # arm offset parameter
     arm_c = pm.Cauchy('c', alpha=0, beta=10, shape=len(gal_arm_map),
@@ -194,7 +217,7 @@ with model:
     try:
         pm.model_to_graphviz(model)
         plt.savefig(
-            os.path.join(loc, 'plots/many_galaxies_model.png'),
+            os.path.join(loc, 'plots/model.png'),
             bbox_inches='tight'
         )
         plt.close()
@@ -208,14 +231,9 @@ print(pm.summary(trace).round(2).sort_values(by='Rhat', ascending=False))
 pm.traceplot(
     trace,
     var_names=('pa', 'pa_sd', 'gal_pa_sd', 'sigma'),
-    lines=(
-        ('pa_scaled', {}, BASE_PA),
-        ('pa_sd', {}, INTER_GAL_SD),
-        ('gal_pa_sd', {}, INTRA_GAL_SD),
-    )
 )
 plt.savefig(
-    os.path.join(loc, 'plots/many_galaxies_trace.png'),
+    os.path.join(loc, 'plots/trace.png'),
     bbox_inches='tight'
 )
 plt.close()
@@ -230,26 +248,6 @@ plt.savefig(
     bbox_inches='tight'
 )
 plt.close()
-
-# plot all the "galaxies" used
-s = int(np.ceil(np.sqrt(N_GALS)))
-f, axs_grid = plt.subplots(
-    ncols=s, nrows=s,
-    sharex=True, sharey=True,
-    figsize=(8, 8), dpi=100
-)
-axs = [j for i in axs_grid for j in i]
-for i, ax in enumerate(axs):
-    plt.sca(ax)
-    try:
-        for arm in galaxies[i]:
-            plt.plot(*xy_from_r_theta(arm[1], arm[0]))
-    except IndexError:
-        pass
-plt.savefig(
-    os.path.join(loc, 'plots/many_galaxies.png'),
-    bbox_inches='tight'
-)
 
 # make a plot showing arm predictions
 with model:
@@ -292,18 +290,6 @@ plt.savefig(
     bbox_inches='tight'
 )
 
-gal_separate_fit_params = pd.Series([])
-with tqdm([galaxy for galaxy in galaxies]) as bar:
-    for i, gal in enumerate(bar):
-        gal_separate_fit_params.loc[i] = [
-            sg.fit_log_spiral(*arm)
-            for arm in gal
-        ]
-arm_separate_fit_params = pd.DataFrame(
-    [j for _, i in gal_separate_fit_params.items() for j in i],
-    columns=('pa', 'c')
-)
-
 f, axs_grid = plt.subplots(
     ncols=s, nrows=s,
     sharex=True, sharey=True,
@@ -342,6 +328,6 @@ for i, ax in enumerate(axs):
     except IndexError:
         pass
 plt.savefig(
-    os.path.join(loc, 'plots/many_galaxies_prediction_comparison.png'),
+    os.path.join(loc, 'plots/prediction_comparison.png'),
     bbox_inches='tight'
 )
