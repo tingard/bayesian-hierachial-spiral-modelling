@@ -2,7 +2,7 @@
 
 This repository makes use of `pymc3` to model the pitch angle tightness of the *Galaxy Builder* main subject set, consisting of 297 (including 99 duplicate) spiral galaxies.
 
-### Problem overview
+## Problem overview
 
 We have a lot of galaxies with arms, but we want a reliable way of describing the resulting pitch angles. We tried fitting a log spiral to each arm and defining the galaxy's "global pitch angle" (global $\psi$) as the length-weighted average of the pitch angles of the arms.
 
@@ -11,7 +11,7 @@ The problem with this is that due to the potentially large inter-arm dispersions
 We instead considered fitting one global pitch angle to all identified arms (which will still have some of the problems associated with dependence on which arms were detecetd). We want to do this in a proper Bayesian manner.
 
 
-### Proposed solution
+## Proposed solution
 
 Assume a galaxy's pitch angle is comprised of some measure of tightness and a chirality, and each of its arms have a rotation. We can describe the global distribution of these parameters
 
@@ -45,5 +45,17 @@ We want to be able to describe the distributions of $\mu_\mathrm{global}$, $\sig
 
 We use a NUTS sampler, initialized by running ADVI and then adapt the resulting diagonal mass matrix based on the sample variance of the tuning samples (performed entirely by `pymc3`, because it's very clever). We tune for **1000** steps and then sample **2000** steps for our results.
 
-### Results
-TBA
+## Results
+### Toy Model
+We create a sample of clean logarithmic spirals, which we can use to iterate on the model, and test its predictions. This sample is randomly regenerated at runtime from an underlying distribution, for example:
+
+![](./super_simple/plots/many_galaxies.png)
+
+Parameters used to create this sample were <span style="color:red">$\mu_\mathrm{global}=20$</span>, <span style="color:red">$\sigma_\mathrm{global}=5$</span> and <span style="color:red">$\sigma_\mathrm{gal}=10$</span>. The resulting traceplot is
+
+![](./super_simple/plots/many_galaxies_trace.png)
+
+
+### *Galaxy Builder* sample
+
+This model has not yet been run successfully

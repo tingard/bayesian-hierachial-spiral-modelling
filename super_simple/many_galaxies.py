@@ -108,7 +108,7 @@ with pm.Model() as model:
     arm_c = pm.Cauchy('c', alpha=0, beta=10, shape=len(gal_arm_map),
                       testval=np.tile(0, len(gal_arm_map)))
 
-    # radial noise (degenerate with error on pitch angle I think...)
+    # radial noise (degenerate witxh error on pitch angle I think...)
     sigma = pm.HalfCauchy('sigma', beta=0.2, testval=0.1)
 
 # Define Dependent variables
@@ -201,8 +201,7 @@ with model:
     except ImportError:
         pass
 
-print('Trace Summary:')
-print(pm.summary(trace).round(2).sort_values(by='Rhat', ascending=False))
+trace_saved = pm.save_trace(trace)
 
 # Save a traceplot
 pm.traceplot(
@@ -250,6 +249,7 @@ plt.savefig(
     os.path.join(loc, 'plots/many_galaxies.png'),
     bbox_inches='tight'
 )
+plt.close()
 
 # make a plot showing arm predictions
 with model:
@@ -291,6 +291,7 @@ plt.savefig(
     os.path.join(loc, 'plots/many_galaxies_predictions.png'),
     bbox_inches='tight'
 )
+plt.close()
 
 gal_separate_fit_params = pd.Series([])
 with tqdm([galaxy for galaxy in galaxies]) as bar:
@@ -345,3 +346,7 @@ plt.savefig(
     os.path.join(loc, 'plots/many_galaxies_prediction_comparison.png'),
     bbox_inches='tight'
 )
+plt.close()
+
+print('Trace Summary:')
+print(pm.summary(trace).round(2).sort_values(by='Rhat', ascending=False))

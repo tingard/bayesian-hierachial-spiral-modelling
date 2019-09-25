@@ -213,20 +213,6 @@ with model:
     trace = pm.sample(2000, tune=1000, target_accept=0.95, max_treedepth=20,
                       init='advi+adapt_diag')
 
-    # Save the model
-    try:
-        pm.model_to_graphviz(model)
-        plt.savefig(
-            os.path.join(loc, 'plots/model.png'),
-            bbox_inches='tight'
-        )
-        plt.close()
-    except ImportError:
-        pass
-
-print('Trace Summary:')
-print(pm.summary(trace).round(2).sort_values(by='Rhat', ascending=False))
-
 # Save a traceplot
 pm.traceplot(
     trace,
@@ -289,6 +275,7 @@ plt.savefig(
     os.path.join(loc, 'plots/many_galaxies_predictions.png'),
     bbox_inches='tight'
 )
+plt.close()
 
 f, axs_grid = plt.subplots(
     ncols=s, nrows=s,
@@ -331,3 +318,7 @@ plt.savefig(
     os.path.join(loc, 'plots/prediction_comparison.png'),
     bbox_inches='tight'
 )
+plt.close()
+
+print('Trace Summary:')
+print(pm.summary(trace).round(2).sort_values(by='Rhat', ascending=False))
