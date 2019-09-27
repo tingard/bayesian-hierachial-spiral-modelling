@@ -29,9 +29,9 @@ Hyperpriors used are as follows:
 
 $$\mu_\phi \sim \mathrm{Uniform}(0, 90)$$
 
-$$\sigma_\mathrm{global} \sim \mathrm{InverseGamma}(\alpha=1,\,\beta=3)$$
+$$\sigma_\mathrm{global} \sim \mathrm{InverseGamma}(\alpha=1,\,\beta=10)$$
 
-$$\sigma_\mathrm{gal} \sim \mathrm{InverseGamma}(\alpha=1,\,\beta=3)$$
+$$\sigma_\mathrm{gal} \sim \mathrm{InverseGamma}(\alpha=1,\,\beta=10)$$
 
 $$\sigma_r \sim \mathrm{HalfCauchy}(\beta=0.2)$$
 We have, from *Galaxy Builder*, 199 galaxies with 367 spiral arms between them. We say
@@ -58,4 +58,7 @@ Parameters used to create this sample were <span style="color:red">$\mu_\mathrm{
 
 ### *Galaxy Builder* sample
 
-This model has not yet been run successfully
+This model has not yet been run successfully. Currently we are pre-selecting galaxies with two or more spiral arms. Examples of galaxies:
+
+![](./plots/prediction_comparison.png)
+![](./plots/trace.png)

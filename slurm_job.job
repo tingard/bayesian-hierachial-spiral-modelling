@@ -3,4 +3,4 @@
 #SBATCH --job-name=HBM_pa_pymc3
 source /users/tingard/modules
 cd /users/tingard/hierarchial_spiral_modelling/
-python do_model.py
+python do_inference.py
