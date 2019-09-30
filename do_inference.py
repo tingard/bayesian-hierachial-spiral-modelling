@@ -7,7 +7,7 @@ from super_simple.hierarchial_model import BHSM
 
 
 # used to limit sample for testing
-N_GALS = 25
+N_GALS = 36
 
 loc = os.path.abspath(os.path.dirname(__file__))
 
@@ -43,16 +43,16 @@ with bhsm.model as model:
 # Sampling
 with bhsm.model as model:
     db = pm.backends.Text('saved_gzb_bhsm_trace')
-    trace = pm.sample(500, tune=500, target_accept=0.90, max_treedepth=20,
-                      init='advi+adapt_diag', trace=db)
+    trace = bhsm.do_inference(draws=500, tune=500, backend='saved_gzb_bhsm_trace')
+    divergent = trace['diverging']
 
-print('Trace Summary:')
-print(pm.summary(trace).round(2).sort_values(by='Rhat', ascending=False))
-
-divergent = trace['diverging']
 print('Number of Divergent %d' % divergent.nonzero()[0].size)
 divperc = divergent.nonzero()[0].size / len(trace) * 100
 print('Percentage of Divergent %.1f' % divperc)
+
+
+print('Trace Summary:')
+print(pm.summary(trace).round(2).sort_values(by='Rhat', ascending=False))
 
 # save EVERYTHING
 with open('pickled_result.pickle', "wb") as buff:

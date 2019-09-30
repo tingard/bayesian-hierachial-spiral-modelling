@@ -6,6 +6,9 @@ from types import SimpleNamespace
 
 class BHSM():
     def __init__(self, galaxies):
+        """Accepts a list of groups of arm polar coordinates, and builds a
+        PYMC3 hierarchial model to infer global distributions of pitch angle
+        """
         self.galaxies = galaxies
         self.gal_n_arms = [len(g) for g in galaxies]
 
@@ -27,6 +30,10 @@ class BHSM():
             for arm_n, (arm_T, arm_R) in enumerate(galaxy)
         ])
 
+        # assert we do not have any NaNs
+        if np.any(np.isnan(self.point_data)):
+            raise ValueError('NaNs present in arm values')
+
         self.T, self.R, arm_idx, self.gal_idx = self.point_data.T
         self.arm_idx = arm_idx.astype(int)
 
@@ -41,7 +48,7 @@ class BHSM():
         # Define Stochastic variables
         with pm.Model() as self.model:
             # Global mean pitch angle
-            self.global_pa_mu = pm.Uniform(
+            self.global_pa_mu = pm.Normal(
                 'pa',
                 lower=0, upper=90,
                 testval=20
@@ -51,7 +58,7 @@ class BHSM():
             self.global_pa_sd = pm.InverseGamma('pa_sd', alpha=2, beta=20)
 
             # intra-galaxy dispersion
-            self.gal_pa_sd = pm.InverseGamma('gal_pa_sd', alpha=2, beta=20)
+            self.gal_pa_sd = pm.InverseGamma('gal_pa_sd', alpha=2, beta=10)
 
             # arm offset parameter
             self.arm_c = pm.Cauchy(
@@ -92,13 +99,13 @@ class BHSM():
 
             # use a Potential for the truncation, pm.Potential('foo', N) simply
             # adds N to the log likelihood
-            pm.Potential(
-                'gal_pa_mu_bound',
-                (
-                    tt.switch(tt.all(self.gal_pa_mu > 0), 0, -np.inf)
-                    + tt.switch(tt.all(self.gal_pa_mu < 90), 0, -np.inf)
-                )
-            )
+            # pm.Potential(
+            #     'gal_pa_mu_bound',
+            #     (
+            #         tt.switch(tt.all(self.gal_pa_mu > 0), 0, -np.inf)
+            #         + tt.switch(tt.all(self.gal_pa_mu < 90), 0, -np.inf)
+            #     )
+            # )
 
             self.arm_pa_mu_offset = pm.Normal(
                 'arm_pa_mu_offset',
@@ -110,13 +117,13 @@ class BHSM():
                 self.gal_pa_mu[self.gal_arm_map]
                 + self.arm_pa_mu_offset * self.gal_pa_sd
             )
-            pm.Potential(
-                'arm_pa_mu_bound',
-                (
-                    tt.switch(tt.all(self.arm_pa > 0), 0, -np.inf)
-                    + tt.switch(tt.all(self.arm_pa < 90), 0, -np.inf)
-                )
-            )
+            # pm.Potential(
+            #     'arm_pa_mu_bound',
+            #     (
+            #         tt.switch(tt.all(self.arm_pa > 0), 0, -np.inf)
+            #         + tt.switch(tt.all(self.arm_pa < 90), 0, -np.inf)
+            #     )
+            # )
 
             # convert to a gradient for a linear fit
             self.arm_b = tt.tan(np.pi / 180 * self.arm_pa)
@@ -135,3 +142,26 @@ class BHSM():
                 sigma=self.sigma,
                 observed=self.R
             )
+
+    def do_inference(self, draws=500, tune=500, target_accept=0.95,
+                     max_treedepth=20, init='advi+adapt_diag',
+                     **kwargs):
+        # it's important we now check the model specification, namely do we
+        # have any problems with logp being undefined?
+        with self.model as model:
+            print(model.check_test_point())
+        # Sampling
+        with self.model as model:
+            if kwargs.get('backend', False):
+                db = pm.backends.Text(kwargs.pop('backend'))
+                kwargs = {'trace': db, **kwargs}
+            trace = pm.sample(
+                draws=draws,
+                tune=tune,
+                target_accept=target_accept,
+                max_treedepth=20,
+                init=init,
+                **kwargs
+            )
+
+        return trace

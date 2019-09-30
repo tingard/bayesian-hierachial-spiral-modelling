@@ -66,17 +66,6 @@ del sid_list
 with bhsm.model as model:
     trace = pm.backends.text.load('saved_gzb_bhsm_trace')
 
-    # Save the model
-    try:
-        pm.model_to_graphviz(model)
-        plt.savefig(
-            os.path.join(loc, 'plots/model.png'),
-            bbox_inches='tight'
-        )
-        plt.close()
-    except ImportError:
-        pass
-
 
 print('Getting predictions')
 with bhsm.model as model:

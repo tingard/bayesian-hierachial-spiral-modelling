@@ -41,6 +41,22 @@ We have, from *Galaxy Builder*, 199 galaxies with 367 spiral arms between them. 
 We want to be able to describe the distributions of $\mu_\mathrm{global}$, $\sigma_\mathrm{global}$ and $\sigma_\mathrm{gal}$, for a given morphological type.
 
 
+### Non-centered model
+
+Change
+
+$$y \sim \mathrm{Normal}(\mu_a, \sigma)$$
+
+$$\mu_a \sim \mathrm{Normal}(\mu_a, \sigma)$$
+
+to
+
+$$t \sim \mathrm{Normal}(0, 1)$$
+
+$$y \sim \mathrm{Normal}(0, 1)$$
+
+$$y = mu + \sigma \sim \mathrm{Normal}(0, 1)$$
+
 ### In Practise
 
 We use a NUTS sampler, initialized by running ADVI and then adapt the resulting diagonal mass matrix based on the sample variance of the tuning samples (performed entirely by `pymc3`, because it's very clever). We tune for **1000** steps and then sample **2000** steps for our results.
