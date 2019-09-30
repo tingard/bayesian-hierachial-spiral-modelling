@@ -1,12 +1,8 @@
+import pickle
 import os
 import numpy as np
 import pandas as pd
 import pymc3 as pm
-import matplotlib.pyplot as plt
-from gzbuilder_analysis.spirals import xy_from_r_theta
-import super_simple.sample_generation as sg
-# import argparse
-from tqdm import tqdm
 from super_simple.hierarchial_model import BHSM
 
 
@@ -47,8 +43,17 @@ with bhsm.model as model:
 # Sampling
 with bhsm.model as model:
     db = pm.backends.Text('saved_gzb_bhsm_trace')
-    trace = pm.sample(2000, tune=1000, target_accept=0.95, max_treedepth=20,
+    trace = pm.sample(500, tune=500, target_accept=0.90, max_treedepth=20,
                       init='advi+adapt_diag', trace=db)
 
 print('Trace Summary:')
 print(pm.summary(trace).round(2).sort_values(by='Rhat', ascending=False))
+
+divergent = trace['diverging']
+print('Number of Divergent %d' % divergent.nonzero()[0].size)
+divperc = divergent.nonzero()[0].size / len(trace) * 100
+print('Percentage of Divergent %.1f' % divperc)
+
+# save EVERYTHING
+with open('pickled_result.pickle', "wb") as buff:
+    pickle.dump({'model': bhsm, 'trace': trace, 'divergent': divergent}, buff)

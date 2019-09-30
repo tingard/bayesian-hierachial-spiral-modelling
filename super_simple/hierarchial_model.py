@@ -3,6 +3,7 @@ import pymc3 as pm
 import theano.tensor as tt
 from types import SimpleNamespace
 
+
 class BHSM():
     def __init__(self, galaxies):
         self.galaxies = galaxies
@@ -47,10 +48,10 @@ class BHSM():
             )
 
             # inter-galaxy dispersion
-            self.global_pa_sd = pm.InverseGamma('pa_sd', alpha=2, beta=10)
+            self.global_pa_sd = pm.InverseGamma('pa_sd', alpha=2, beta=20)
 
             # intra-galaxy dispersion
-            self.gal_pa_sd = pm.InverseGamma('gal_pa_sd', alpha=2, beta=10)
+            self.gal_pa_sd = pm.InverseGamma('gal_pa_sd', alpha=2, beta=20)
 
             # arm offset parameter
             self.arm_c = pm.Cauchy(
