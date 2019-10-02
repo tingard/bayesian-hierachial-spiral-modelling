@@ -1,160 +1,171 @@
+import os
+import shutil
 import numpy as np
+from pandas import DataFrame
 import pymc3 as pm
 import theano.tensor as tt
-from types import SimpleNamespace
 
 
 class BHSM():
-    def __init__(self, galaxies):
+    def __init__(self, galaxies, build=True):
         """Accepts a list of groups of arm polar coordinates, and builds a
         PYMC3 hierarchial model to infer global distributions of pitch angle
         """
         self.galaxies = galaxies
         self.gal_n_arms = [len(g) for g in galaxies]
-
+        self.n_arms = sum(self.gal_n_arms)
         # map from arm to galaxy (so gal_arm_map[5] = 3 means the 5th arm is
         # from the 3rd galaxy)
         self.gal_arm_map = np.concatenate([
             np.tile(i, n) for i, n in enumerate(self.gal_n_arms)
         ])
-
         # Create an array containing needed information in a stacked form
-        self.point_data = np.concatenate([
-            np.stack((
-                arm_T,
-                arm_R,
-                np.tile(sum(self.gal_n_arms[:gal_n]) + arm_n, len(arm_T)),
-                np.tile(gal_n, len(arm_T))
-            ), axis=-1)
-            for gal_n, galaxy in enumerate(galaxies)
-            for arm_n, (arm_T, arm_R) in enumerate(galaxy)
-        ])
+        self.data = DataFrame(
+            np.concatenate([
+                np.stack((
+                    arm_T,
+                    arm_R,
+                    np.tile(sum(self.gal_n_arms[:gal_n]) + arm_n, len(arm_T)),
+                    np.tile(gal_n, len(arm_T))
+                ), axis=-1)
+                for gal_n, galaxy in enumerate(galaxies)
+                for arm_n, (arm_T, arm_R) in enumerate(galaxy)
+            ]),
+            columns=('theta', 'r', 'arm_index', 'galaxy_index')
+        )
+        # ensure correct dtypes
+        self.data[['arm_index', 'galaxy_index']] = \
+            self.data[['arm_index', 'galaxy_index']].astype(int)
 
         # assert we do not have any NaNs
-        if np.any(np.isnan(self.point_data)):
+        if np.any(self.data.isna()):
             raise ValueError('NaNs present in arm values')
-
-        self.T, self.R, arm_idx, self.gal_idx = self.point_data.T
-        self.arm_idx = arm_idx.astype(int)
 
         # ensure the arm indexing makes sense
         assert np.all(
-            (np.unique(arm_idx) - np.arange(sum(self.gal_n_arms))) == 0
+            (
+                np.unique(self.data['arm_index'])
+                - np.arange(sum(self.gal_n_arms))
+            ) == 0
         )
-        self.build_model()
+        if build:
+            self.build_model()
+        else:
+            self.model = None
 
     def build_model(self):
-        self.model = SimpleNamespace()
         # Define Stochastic variables
         with pm.Model() as self.model:
             # Global mean pitch angle
-            self.global_pa_mu = pm.Normal(
-                'pa',
-                lower=0, upper=90,
-                testval=20
+            self.mu_phi_scaled = pm.LogitNormal(
+                'mu_phi_scaled',
+                mu=0, sigma=1.5,
+                testval=0.29
+            )
+
+            # self.mu_phi_scaled = pm.Uniform(
+            #     'mu_phi_scaled',
+            #     lower=0, upper=1,
+            #     testval=20/90
+            # )
+
+            self.mu_phi = pm.Deterministic(
+                'mu_phi',
+                90 * self.mu_phi_scaled
             )
 
             # inter-galaxy dispersion
-            self.global_pa_sd = pm.InverseGamma('pa_sd', alpha=2, beta=20)
-
-            # intra-galaxy dispersion
-            self.gal_pa_sd = pm.InverseGamma('gal_pa_sd', alpha=2, beta=10)
+            self.sigma_phi = pm.InverseGamma(
+                'sigma_phi',
+                alpha=2, beta=20,
+                testval=5
+            )
 
             # arm offset parameter
-            self.arm_c = pm.Cauchy(
+            self.c = pm.Cauchy(
                 'c',
                 alpha=0, beta=10,
-                shape=len(self.gal_arm_map),
-                testval=np.tile(0, len(self.gal_arm_map))
+                shape=self.n_arms,
+                testval=np.tile(0, self.n_arms)
             )
 
             # radial noise
-            self.sigma = pm.InverseGamma('sigma', alpha=2, beta=0.5)
+            self.sigma_r = pm.InverseGamma('sigma_r', alpha=2, beta=0.5)
 
         # Define Dependent variables
         with self.model:
             # we want this:
-            # gal_pa_mu = pm.TruncatedNormal(
-            #     'gal_pa_mu',
-            #     mu=global_pa_mu, sd=global_pa_sd,
-            #     lower=0.1, upper=60,
-            #     shape=n_gals,
-            # )
-            # arm_pa = pm.TruncatedNormal(
-            #     'arm_pa_mu',
-            #     mu=gal_pa_mu[gal_arm_map], sd=gal_pa_sd[gal_arm_map],
-            #     lower=0.1, upper=60,
-            #     shape=len(gal_arm_map),
-            # )
-            # Specified in a non-centred way:
-
-            self.gal_pa_mu_offset = pm.Normal(
-                'gal_pa_mu_offset',
-                mu=0, sd=1, shape=len(self.galaxies),
+            self.phi_arm = pm.TruncatedNormal(
+                'phi_arm',
+                mu=self.mu_phi, sd=self.sigma_phi,
+                lower=0, upper=90,
+                shape=self.n_arms,
             )
-            self.gal_pa_mu = pm.Deterministic(
-                'gal_pa_mu',
-                self.global_pa_mu + self.gal_pa_mu_offset * self.global_pa_sd
-            )
-
-            # use a Potential for the truncation, pm.Potential('foo', N) simply
-            # adds N to the log likelihood
-            # pm.Potential(
-            #     'gal_pa_mu_bound',
-            #     (
-            #         tt.switch(tt.all(self.gal_pa_mu > 0), 0, -np.inf)
-            #         + tt.switch(tt.all(self.gal_pa_mu < 90), 0, -np.inf)
-            #     )
+            # # Specified in a non-centred way:
+            # self.phi_arm_offset = pm.Normal(
+            #     'phi_arm_offset',
+            #     mu=0, sd=1, shape=self.n_arms,
+            # )
+            # self.phi_arm = pm.Deterministic(
+            #     'phi_arm',
+            #     self.mu_phi + self.phi_arm_offset * self.sigma_phi
             # )
 
-            self.arm_pa_mu_offset = pm.Normal(
-                'arm_pa_mu_offset',
-                mu=0, sd=1, shape=sum(self.gal_n_arms),
-                testval=np.tile(0, sum(self.gal_n_arms))
-            )
-            self.arm_pa = pm.Deterministic(
-                'arm_pa',
-                self.gal_pa_mu[self.gal_arm_map]
-                + self.arm_pa_mu_offset * self.gal_pa_sd
-            )
-            # pm.Potential(
-            #     'arm_pa_mu_bound',
-            #     (
-            #         tt.switch(tt.all(self.arm_pa > 0), 0, -np.inf)
-            #         + tt.switch(tt.all(self.arm_pa < 90), 0, -np.inf)
-            #     )
+            # self.phi_arm_scaled = pm.LogitNormal(
+            #     'phi_arm_scaled',
+            #     mu=self.mu_phi_scaled, sigma=self.sigma_phi / 90,
+            #     shape=self.n_arms,
+            # )
+            #
+            # self.phi_arm = pm.Deterministic(
+            #     'phi_arm',
+            #     self.phi_arm_scaled * 90
             # )
 
             # convert to a gradient for a linear fit
-            self.arm_b = tt.tan(np.pi / 180 * self.arm_pa)
-            self.arm_r = tt.exp(
-                self.arm_b[self.arm_idx] * self.T
-                + self.arm_c[self.arm_idx]
+            self.b = tt.tan(np.pi / 180 * self.phi_arm)
+            r = tt.exp(
+                self.b[self.data['arm_index'].values] * self.data['theta']
+                + self.c[self.data['arm_index'].values]
             )
-            pm.Potential(
-                'arm_r_bound',
-                tt.switch(tt.all(self.arm_r < 1E4), 0, -np.inf)
-            )
+
+            # use Potentials for truncation, pm.Potential('foo', N) simply
+            # adds N to the log likelihood, so combining with a theano switch
+            # allows us to bound variables, at the cost of losing model
+            # normalization
+            # pm.Potential(
+            #     'phi_arm_bound',
+            #     (
+            #         tt.switch(tt.all(self.phi_arm > 0), 0, -np.inf)
+            #         + tt.switch(tt.all(self.phi_arm < 90), 0, -np.inf)
+            #     )
+            # )
+            # pm.Potential(
+            #     'r_bound',
+            #     tt.switch(tt.all(r < 1E4), 0, -np.inf)
+            # )
+
             # likelihood function
             self.likelihood = pm.Normal(
                 'Likelihood',
-                mu=self.arm_r,
-                sigma=self.sigma,
-                observed=self.R
+                mu=r,
+                sigma=self.sigma_r,
+                observed=self.data['r'],
             )
 
-    def do_inference(self, draws=500, tune=500, target_accept=0.95,
+    def do_inference(self, draws=1000, tune=500, target_accept=0.85,
                      max_treedepth=20, init='advi+adapt_diag',
                      **kwargs):
+        if self.model is None:
+            self.build_model()
+
         # it's important we now check the model specification, namely do we
         # have any problems with logp being undefined?
         with self.model as model:
             print(model.check_test_point())
+
         # Sampling
         with self.model as model:
-            if kwargs.get('backend', False):
-                db = pm.backends.Text(kwargs.pop('backend'))
-                kwargs = {'trace': db, **kwargs}
             trace = pm.sample(
                 draws=draws,
                 tune=tune,
@@ -163,5 +174,25 @@ class BHSM():
                 init=init,
                 **kwargs
             )
-
         return trace
+
+    def do_advi(self):
+        if self.model is None:
+            self.build_model()
+
+        # it's important we now check the model specification, namely do we
+        # have any problems with logp being undefined?
+        with self.model as model:
+            print(model.check_test_point())
+
+        # Sampling
+        with self.model as model:
+            mean_field = pm.fit(
+                method='advi',
+                callbacks=[
+                    pm.callbacks.CheckParametersConvergence(
+                        diff='absolute'
+                    )
+                ]
+            )
+        return mean_field

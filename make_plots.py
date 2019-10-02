@@ -1,4 +1,5 @@
 import os
+import pickle
 import numpy as np
 import pandas as pd
 import scipy.stats as st
@@ -7,38 +8,17 @@ import matplotlib.pyplot as plt
 from gzbuilder_analysis.spirals import xy_from_r_theta
 import super_simple.sample_generation as sg
 import seaborn as sns
-# import argparse
 from tqdm import tqdm
-from super_simple.hierarchial_model import BHSM
-
-
-# used to limit sample for testing
-N_GALS = 25
 
 loc = os.path.abspath(os.path.dirname(__file__))
+with open('pickled_result.pickle', 'rb') as f:
+    saved = pickle.load(f)
 
-# sample extraction
-agg_results = pd.read_pickle('lib/aggregation_results.pickle')
-sid_list = agg_results.index.values
-
-# scale r from 0 to 1
-max_r = max(np.max(arm.R) for gal in agg_results.Arms.values for arm in gal)
-galaxies = [
-    [
-        np.array((arm.t * arm.chirality, arm.R / max_r))
-        for arm in galaxy
-    ]
-    for galaxy in agg_results.Arms.values
-    if len(galaxy) > 1
-]
-
-# reduce the sample size for testing purposes
-np.random.seed(0)
-galaxies = np.array(galaxies)[
-    np.random.choice(np.arange(len(galaxies)), size=N_GALS, replace=False)
-]
-
-
+bhsm = saved['model']
+galaxies = bhsm.galaxies
+trace = saved['trace']
+n_draws = saved.get('n_draws', 500)
+n_tune = saved.get('n_tune', 500)
 # Fit each arm separately
 print('Fitting individually')
 gal_separate_fit_params = pd.Series([])
@@ -57,27 +37,18 @@ print(arm_separate_fit_params.describe())
 
 print('Building model')
 # initialize the model using the custom BHSM class
-bhsm = BHSM(galaxies)
-
-# cleanup to save RAM
-del agg_results
-del sid_list
-
-with bhsm.model as model:
-    trace = pm.backends.text.load('saved_gzb_bhsm_trace')
-
 
 print('Getting predictions')
 with bhsm.model as model:
     param_predictions = pm.sample_posterior_predictive(
         trace, samples=100,
-        vars=(bhsm.arm_pa, bhsm.arm_c, bhsm.global_pa_mu, bhsm.global_pa_sd)
+        vars=[bhsm.phi_arm, bhsm.c, bhsm.mu_phi, bhsm.sigma_phi]
     )
-pred_pa = param_predictions['arm_pa']
+pred_pa = param_predictions['phi_arm']
 pred_c = param_predictions['c']
 
-pred_mu_phi = param_predictions['pa']
-pred_sigma_phi = param_predictions['pa_sd']
+pred_mu_phi = param_predictions['mu_phi']
+pred_sigma_phi = param_predictions['sigma_phi']
 
 
 print('Making plots')
@@ -102,12 +73,10 @@ def plot_sample(galaxies, axs, **kwargs):
             pass
 
 
-var_names = ('pa', 'pa_sd', 'gal_pa_sd', 'sigma')
+var_names = ('mu_phi', 'sigma_phi')
 names = (
-    r'$\phi_\mathrm{global}}$',
-    r'$\sigma_\mathrm{global}$',
-    r'$\sigma_\mathrm{gal}}$',
-    r'$\sigma_r$'
+    r'$\mu_\phi$',
+    r'$\sigma_\phi$',
 )
 
 
@@ -116,8 +85,8 @@ def traceplot(trace, var_names=[], names=None):
     f, ax = plt.subplots(nrows=len(var_names), ncols=2, dpi=100)
     for i, p in enumerate(var_names):
         plt.sca(ax[i][0])
-        for j in range(4):
-            chain = trace.get_values(p, burn=1000, chains=[j])
+        for j in range(2):
+            chain = trace.get_values(p, chains=[j])
             sns.kdeplot(chain)
             ax[i][1].plot(chain, alpha=0.25)
             if names is not None:
@@ -151,7 +120,7 @@ plt.savefig(
 
 print('\tPlotting sample')
 # plot all the "galaxies" used
-s = int(np.ceil(np.sqrt(N_GALS)))
+s = int(np.ceil(np.sqrt(len(galaxies))))
 f, axs_grid = plt.subplots(
     ncols=s, nrows=s,
     sharex=True, sharey=True,
@@ -175,6 +144,23 @@ f, axs_grid = plt.subplots(
 axs = [j for i in axs_grid for j in i]
 plot_sample(galaxies, axs)
 
+# plot the posterior predictions
+for i in range(len(pred_pa)):
+    arm_pa = pred_pa[i]
+    arm_c = pred_c[i]
+    arm_b = np.tan(np.deg2rad(arm_pa))
+    for j in range(len(arm_pa)):
+        t = bhsm.data['theta'][bhsm.data['arm_index'] == j].values
+        r_pred = np.exp(arm_b[j] * t + arm_c[j])
+        o = np.argsort(t)
+        xy = xy_from_r_theta(r_pred[o], t[o])
+        axs[bhsm.gal_arm_map[j]].plot(
+            *xy,
+            c='k',
+            alpha=3 / len(pred_pa),
+            linewidth=1,
+        )
+
 # plot the individually fit arms
 for i, ax in enumerate(axs):
     plt.sca(ax)
@@ -183,27 +169,11 @@ for i, ax in enumerate(axs):
             R_fit = sg.log_spiral(arm[0], p[0])*np.exp(p[1])
             o = np.argsort(arm[0])
             xy = xy_from_r_theta(R_fit[o], arm[0][o])
-            plt.plot(*xy, 'k', alpha=0.7, linewidth=2)
+            plt.plot(*xy, 'r', linewidth=1)
 
     except IndexError:
         pass
 
-# plot the posterior predictions
-for i in range(len(pred_pa)):
-    arm_pa = pred_pa[i]
-    arm_c = pred_c[i]
-    arm_b = np.tan(np.deg2rad(arm_pa))
-    for j in range(len(arm_pa)):
-        t = bhsm.T[bhsm.arm_idx == j]
-        r_pred = np.exp(arm_b[j] * t + arm_c[j])
-        o = np.argsort(t)
-        xy = xy_from_r_theta(r_pred[o], t[o])
-        axs[bhsm.gal_arm_map[j]].plot(
-            *xy,
-            c='r',
-            alpha=3 / len(pred_pa),
-            linewidth=1,
-        )
 plt.savefig(
     os.path.join(loc, 'plots/prediction_comparison.png'),
     bbox_inches='tight'
@@ -216,7 +186,7 @@ try:
     import corner
     # extract the samples
     postsamples = np.vstack([
-        trace[k][1000:]  # trace.get_values(k, burn=1000)
+        trace[k]  # trace.get_values(k, burn=1000)
         for k in var_names
     ]).T
     print('\t\tNumber of posterior samples is {}'.format(postsamples.shape[0]))
@@ -225,7 +195,7 @@ try:
 except ImportError:
     try:
         df = pm.backends.tracetab.trace_to_dataframe(
-            trace[1000:], chains=None, varnames=var_names
+            trace, chains=None, varnames=var_names
         )
         sns.pairplot(df)
         plt.savefig('plots/corner_seaborn.png')
