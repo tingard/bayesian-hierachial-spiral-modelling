@@ -24,7 +24,6 @@ def generate_sample(N_GALS, seed=None):
             for arm in galaxy
         ]
         for galaxy in agg_results.Arms.values
-        if len(galaxy) > 1
     ]
 
     galaxies = np.array(galaxies)[
@@ -36,9 +35,9 @@ def generate_sample(N_GALS, seed=None):
 if __name__ == '__main__':
     loc = os.path.abspath(os.path.dirname(__file__))
 
-    n_draws = 2000
+    n_draws = 1000
     n_tune = 500
-    n_gals = 4**2
+    n_gals = 10**2
 
     # generate a sample using the helper function
     galaxies = generate_sample(n_gals, seed=0)

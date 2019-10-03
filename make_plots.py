@@ -1,4 +1,5 @@
 import os
+import sys
 import pickle
 import numpy as np
 import pandas as pd
@@ -9,16 +10,40 @@ from gzbuilder_analysis.spirals import xy_from_r_theta
 import super_simple.sample_generation as sg
 import seaborn as sns
 from tqdm import tqdm
+import argparse
 
-loc = os.path.abspath(os.path.dirname(__file__))
-with open('pickled_result.pickle', 'rb') as f:
-    saved = pickle.load(f)
 
+parser = argparse.ArgumentParser(
+    description=(
+        'Make plots of results from hierarchial model'
+    )
+)
+parser.add_argument('--input', default='pickled_result.pickle',
+                    help='Pickled result from running the do_inference.py script')
+parser.add_argument('--output', '-o', metavar='/path/to/directory',
+                    default='plots', help='Where to save plots')
+args = parser.parse_args()
+
+try:
+    with open(args.input, 'rb') as f:
+        saved = pickle.load(f)
+except IOError:
+    print('Invalid input file')
+    sys.exit(1)
+if not os.path.isdir(args.output):
+    os.makedirs(args.output)
+
+
+# extract the needed parameters from the saved state
 bhsm = saved['model']
 galaxies = bhsm.galaxies
 trace = saved['trace']
 n_draws = saved.get('n_draws', 500)
 n_tune = saved.get('n_tune', 500)
+
+print('N tune: {}, N draws: {}'.format(n_tune, n_draws))
+
+# PREPARATION
 # Fit each arm separately
 print('Fitting individually')
 gal_separate_fit_params = pd.Series([])
@@ -51,7 +76,15 @@ pred_mu_phi = param_predictions['mu_phi']
 pred_sigma_phi = param_predictions['sigma_phi']
 
 
+# PLOTTING
 print('Making plots')
+
+var_names = ('mu_phi', 'sigma_phi', 'sigma_r')
+names = (
+    r'$\mu_\phi$',
+    r'$\sigma_\phi$',
+    r'$\sigma_r$',
+)
 
 
 def plot_sample(galaxies, axs, **kwargs):
@@ -73,16 +106,14 @@ def plot_sample(galaxies, axs, **kwargs):
             pass
 
 
-var_names = ('mu_phi', 'sigma_phi')
-names = (
-    r'$\mu_\phi$',
-    r'$\sigma_\phi$',
-)
-
-
 def traceplot(trace, var_names=[], names=None):
     assert (names is None) or (len(var_names) == len(names))
-    f, ax = plt.subplots(nrows=len(var_names), ncols=2, dpi=100)
+    f, ax = plt.subplots(
+        nrows=len(var_names),
+        figsize=(12, 4*len(var_names)),
+        ncols=2,
+        dpi=100
+    )
     for i, p in enumerate(var_names):
         plt.sca(ax[i][0])
         for j in range(2):
@@ -94,6 +125,19 @@ def traceplot(trace, var_names=[], names=None):
     plt.tight_layout()
 
 
+print('\tPlotting model')
+try:
+    with bhsm.model as model:
+        pm.model_to_graphviz(bhsm.model).render(
+            os.path.join(args.output, 'model'),
+            view=False,
+            format='pdf',
+            cleanup=True,
+        )
+except ImportError:
+    pass
+
+
 print('\tPlotting traceplot')
 # # this use too much RAM, so we define our own above
 # pm.traceplot(
@@ -102,7 +146,7 @@ print('\tPlotting traceplot')
 # )
 traceplot(trace, var_names, names)
 plt.savefig(
-    os.path.join(loc, 'plots/trace.png'),
+    os.path.join(args.output, 'trace.png'),
     bbox_inches='tight'
 )
 # plt.close()
@@ -113,23 +157,23 @@ plt.savefig(
 #     var_names=('pa', 'pa_sd', 'gal_pa_sd', 'sigma')
 # )
 # plt.savefig(
-#     os.path.join(loc, 'plots/posterior.png'),
+#     os.path.join(args.output, 'posterior.png'),
 #     bbox_inches='tight'
 # )
 # plt.close()
 
 print('\tPlotting sample')
 # plot all the "galaxies" used
-s = int(np.ceil(np.sqrt(len(galaxies))))
+s = int(np.ceil(np.sqrt(min(25, len(galaxies)))))
 f, axs_grid = plt.subplots(
     ncols=s, nrows=s,
     sharex=True, sharey=True,
     figsize=(16, 16), dpi=100
 )
 axs = [j for i in axs_grid for j in i]
-plot_sample(galaxies, axs)
+plot_sample(galaxies[:len(axs)], axs)
 plt.savefig(
-    os.path.join(loc, 'plots/sample.png'),
+    os.path.join(args.output, 'sample.png'),
     bbox_inches='tight'
 )
 plt.close()
@@ -139,17 +183,17 @@ print('\tPlotting predictions')
 f, axs_grid = plt.subplots(
     ncols=s, nrows=s,
     sharex=True, sharey=True,
-    figsize=(16, 16), dpi=100
+    figsize=(16, 16), dpi=200
 )
 axs = [j for i in axs_grid for j in i]
-plot_sample(galaxies, axs)
+plot_sample(galaxies[:len(axs)], axs)
 
 # plot the posterior predictions
 for i in range(len(pred_pa)):
     arm_pa = pred_pa[i]
     arm_c = pred_c[i]
     arm_b = np.tan(np.deg2rad(arm_pa))
-    for j in range(len(arm_pa)):
+    for j in range(min(len(arm_pa), s**2)):
         t = bhsm.data['theta'][bhsm.data['arm_index'] == j].values
         r_pred = np.exp(arm_b[j] * t + arm_c[j])
         o = np.argsort(t)
@@ -158,7 +202,7 @@ for i in range(len(pred_pa)):
             *xy,
             c='k',
             alpha=3 / len(pred_pa),
-            linewidth=1,
+            linewidth=0.5,
         )
 
 # plot the individually fit arms
@@ -175,7 +219,7 @@ for i, ax in enumerate(axs):
         pass
 
 plt.savefig(
-    os.path.join(loc, 'plots/prediction_comparison.png'),
+    os.path.join(args.output, 'prediction_comparison.png'),
     bbox_inches='tight'
 )
 plt.close()
@@ -191,14 +235,14 @@ try:
     ]).T
     print('\t\tNumber of posterior samples is {}'.format(postsamples.shape[0]))
     fig = corner.corner(postsamples, labels=names)
-    fig.savefig('plots/corner.png')
+    fig.savefig(os.path.join(args.output, 'corner.png'))
 except ImportError:
     try:
         df = pm.backends.tracetab.trace_to_dataframe(
             trace, chains=None, varnames=var_names
         )
         sns.pairplot(df)
-        plt.savefig('plots/corner_seaborn.png')
+        plt.savefig(os.path.join(args.output, 'corner_seaborn.png'))
         plt.close()
     except ImportError:
         import sys
@@ -230,5 +274,5 @@ empirical_dist = st.norm.pdf(
     scale=arm_separate_fit_params['pa'].std(),
 )
 plt.plot(x, empirical_dist, 'k--')
-plt.savefig('plots/pa_realizations.png', bbox_inches='tight')
+plt.savefig(os.path.join(args.output, 'pa_realizations.png'), bbox_inches='tight')
 plt.close()
