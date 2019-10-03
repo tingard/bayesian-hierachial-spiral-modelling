@@ -3,10 +3,11 @@ import os
 import numpy as np
 import pandas as pd
 import pymc3 as pm
+import warnings
 from super_simple.hierarchial_model import BHSM
 
 
-def generate_sample(N_GALS, seed=None):
+def generate_sample(N_GALS=None, seed=None):
     if seed is not None:
         np.random.seed(seed)
 
@@ -25,22 +26,40 @@ def generate_sample(N_GALS, seed=None):
         ]
         for galaxy in agg_results.Arms.values
     ]
-
-    galaxies = np.array(galaxies)[
-        np.random.choice(np.arange(len(galaxies)), size=N_GALS, replace=False)
-    ]
+    if N_GALS is not None:
+        galaxies = np.array(galaxies)[
+            np.random.choice(
+                np.arange(len(galaxies)),
+                size=N_GALS, replace=False
+            )
+        ]
+        if len(galaxies) < N_GALS:
+            warnings.warn('Sample contains fewer galaxies than specified')
     return galaxies
 
 
 if __name__ == '__main__':
-    loc = os.path.abspath(os.path.dirname(__file__))
+    import argparse
 
-    n_draws = 1000
-    n_tune = 500
-    n_gals = 10**2
+    parser = argparse.ArgumentParser(
+        description=(
+            'Run hierarchial model and save output'
+        )
+    )
+    parser.add_argument('--ngals', '-N', default=None,
+                        help='Number of galaxies in sample')
+    parser.add_argument('--ntune', default=500,
+                        help='Number of tuning steps to take')
+    parser.add_argument('--ndraws', default=1000,
+                        help='Number of posterior draws to take')
+    parser.add_argument('--output', '-o', metavar='/path/to/file.pickle',
+                        default='pickled_result.pickle',
+                        help='Where to save output dump')
+
+    args = parser.parse_args()
 
     # generate a sample using the helper function
-    galaxies = generate_sample(n_gals, seed=0)
+    galaxies = generate_sample(args.ngals, seed=0)
 
     # initialize the model using the custom BHSM class
     bhsm = BHSM(galaxies)
@@ -56,8 +75,8 @@ if __name__ == '__main__':
         pass
 
     trace = bhsm.do_inference(
-        draws=n_draws,
-        tune=n_tune,
+        draws=args.ndraws,
+        tune=args.ntune,
         # backend='saved_gzb_bhsm_trace'
     )
 
@@ -71,11 +90,11 @@ if __name__ == '__main__':
     print(pm.summary(trace).round(2).sort_values(by='Rhat', ascending=False))
 
     # save EVERYTHING
-    with open('pickled_result.pickle', "wb") as buff:
+    with open(args.output, "wb") as buff:
         pickle.dump(
             {
                 'model': bhsm, 'trace': trace,
-                'n_samples': n_draws, 'n_burn': n_tune
+                'n_samples': args.ndraws, 'n_burn': args.ntune
             },
             buff
         )

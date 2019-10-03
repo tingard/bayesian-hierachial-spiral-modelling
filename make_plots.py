@@ -110,13 +110,13 @@ def traceplot(trace, var_names=[], names=None):
     assert (names is None) or (len(var_names) == len(names))
     f, ax = plt.subplots(
         nrows=len(var_names),
-        figsize=(12, 4*len(var_names)),
+        figsize=(12, 3*len(var_names)),
         ncols=2,
         dpi=100
     )
     for i, p in enumerate(var_names):
         plt.sca(ax[i][0])
-        for j in range(2):
+        for j in range(trace.nchains):
             chain = trace.get_values(p, chains=[j])
             sns.kdeplot(chain)
             ax[i][1].plot(chain, alpha=0.25)
