@@ -26,7 +26,7 @@ def generate_sample(N_GALS=None, seed=None):
         ]
         for galaxy in agg_results.Arms.values
     ]
-    if N_GALS is not None:
+    if N_GALS > 0:
         galaxies = np.array(galaxies)[
             np.random.choice(
                 np.arange(len(galaxies)),
@@ -46,18 +46,23 @@ if __name__ == '__main__':
             'Run hierarchial model and save output'
         )
     )
-    parser.add_argument('--ngals', '-N', default=None,
+    parser.add_argument('--ngals', '-N', default=-1, type=int,
                         help='Number of galaxies in sample')
-    parser.add_argument('--ntune', default=500,
+    parser.add_argument('--ntune', default=500, type=int,
                         help='Number of tuning steps to take')
-    parser.add_argument('--ndraws', default=1000,
+    parser.add_argument('--ndraws', default=1000, type=int,
                         help='Number of posterior draws to take')
     parser.add_argument('--output', '-o', metavar='/path/to/file.pickle',
-                        default='pickled_result.pickle',
+                        default='',
                         help='Where to save output dump')
 
     args = parser.parse_args()
-
+    if args.output == '':
+        args.output = 'n{}d{}t{}.pickle'.format(
+            args.ngals,
+            args.ndraws,
+            args.ntune,
+        )
     # generate a sample using the helper function
     galaxies = generate_sample(args.ngals, seed=0)
 

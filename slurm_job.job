@@ -1,6 +1,6 @@
 #!/bin/bash
-#SBATCH -p sciama3.q
+#SBATCH -p sciama4.q
 #SBATCH --job-name=HBM_pa_pymc3
 source /users/tingard/modules
 cd /users/tingard/hierarchial_spiral_modelling/
-python do_inference.py
+python do_inference.py --ngals=25 --output="n25d1000t500.pickle"

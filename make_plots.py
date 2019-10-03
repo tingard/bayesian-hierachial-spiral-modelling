@@ -21,7 +21,7 @@ parser = argparse.ArgumentParser(
 parser.add_argument('--input', default='pickled_result.pickle',
                     help='Pickled result from running the do_inference.py script')
 parser.add_argument('--output', '-o', metavar='/path/to/directory',
-                    default='plots', help='Where to save plots')
+                    default='', help='Where to save plots')
 args = parser.parse_args()
 
 try:
@@ -30,6 +30,12 @@ try:
 except IOError:
     print('Invalid input file')
     sys.exit(1)
+
+if args.output == '':
+    args.output = 'plots_{}'.format(
+        args.input.split('.')[0]
+    ) if ('.' in args.input) else 'plots'
+
 if not os.path.isdir(args.output):
     os.makedirs(args.output)
 
@@ -59,9 +65,6 @@ arm_separate_fit_params = pd.DataFrame(
 )
 print(arm_separate_fit_params.describe())
 
-
-print('Building model')
-# initialize the model using the custom BHSM class
 
 print('Getting predictions')
 with bhsm.model as model:
