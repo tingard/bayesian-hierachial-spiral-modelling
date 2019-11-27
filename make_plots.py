@@ -6,7 +6,7 @@ import pandas as pd
 import scipy.stats as st
 import pymc3 as pm
 import matplotlib.pyplot as plt
-from gzbuilder_analysis.spirals import xy_from_r_theta
+from gzbuilder_analysis.aggregation.spirals import xy_from_r_theta
 import super_simple.sample_generation as sg
 import seaborn as sns
 from tqdm import tqdm
@@ -48,6 +48,7 @@ n_draws = saved.get('n_draws', 500)
 n_tune = saved.get('n_tune', 500)
 
 print('N tune: {}, N draws: {}'.format(n_tune, n_draws))
+
 
 # PREPARATION
 # Fit each arm separately
@@ -152,18 +153,7 @@ plt.savefig(
     os.path.join(args.output, 'trace.png'),
     bbox_inches='tight'
 )
-# plt.close()
-# print('\tPlotting posterior')
-# # Save a posterior plot
-# pm.plot_posterior(
-#     trace,
-#     var_names=('pa', 'pa_sd', 'gal_pa_sd', 'sigma')
-# )
-# plt.savefig(
-#     os.path.join(args.output, 'posterior.png'),
-#     bbox_inches='tight'
-# )
-# plt.close()
+plt.close()
 
 print('\tPlotting sample')
 # plot all the "galaxies" used
@@ -189,15 +179,19 @@ f, axs_grid = plt.subplots(
     figsize=(16, 16), dpi=200
 )
 axs = [j for i in axs_grid for j in i]
-plot_sample(galaxies[:len(axs)], axs)
+plot_sample(galaxies[:len(axs)], axs, alpha=0.6)
 
 # plot the posterior predictions
+# for each sample (of 100 drawn samples)
 for i in range(len(pred_pa)):
     arm_pa = pred_pa[i]
     arm_c = pred_c[i]
     arm_b = np.tan(np.deg2rad(arm_pa))
-    for j in range(min(len(arm_pa), s**2)):
-        t = bhsm.data['theta'][bhsm.data['arm_index'] == j].values
+    # for each arm in this sample
+    for j in range(len(arm_pa)):
+        if bhsm.gal_arm_map[j] >= len(axs):
+            continue
+        t = bhsm.data['theta'][g].values
         r_pred = np.exp(arm_b[j] * t + arm_c[j])
         o = np.argsort(t)
         xy = xy_from_r_theta(r_pred[o], t[o])
@@ -216,7 +210,7 @@ for i, ax in enumerate(axs):
             R_fit = sg.log_spiral(arm[0], p[0])*np.exp(p[1])
             o = np.argsort(arm[0])
             xy = xy_from_r_theta(R_fit[o], arm[0][o])
-            plt.plot(*xy, 'r', linewidth=1)
+            plt.plot(*xy, 'r:', linewidth=1)
 
     except IndexError:
         pass
@@ -264,7 +258,7 @@ plt.fill_between(
     x, np.zeros(len(x)), y,
     color='r', alpha=0.5
 )
-plt.plot(x, y, 'r')
+plt.plot(x, y, 'r', label='Hierarchial model')
 # for i in range(len(pred_mu_phi)):
 #     y = st.norm.pdf(x, loc=pred_mu_phi[i], scale=pred_sigma_phi[i])
 #     plt.fill_between(
@@ -276,6 +270,7 @@ empirical_dist = st.norm.pdf(
     loc=arm_separate_fit_params['pa'].mean(),
     scale=arm_separate_fit_params['pa'].std(),
 )
-plt.plot(x, empirical_dist, 'k--')
+plt.plot(x, empirical_dist, 'k--', label='Separately fit pitch angle')
+plt.legend()
 plt.savefig(os.path.join(args.output, 'pa_realizations.png'), bbox_inches='tight')
 plt.close()

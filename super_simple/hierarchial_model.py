@@ -1,7 +1,7 @@
 import os
 import shutil
 import numpy as np
-from pandas import DataFrame
+from pandas import Series, DataFrame
 import pymc3 as pm
 import theano.tensor as tt
 
@@ -53,98 +53,38 @@ class BHSM():
         else:
             self.model = None
 
-    def build_model(self):
+    def build_model(self, name='normal_model', prefix=''):
         # Define Stochastic variables
-        with pm.Model() as self.model:
+        with pm.Model(name=name) as self.model:
             # Global mean pitch angle
             self.mu_phi_scaled = pm.LogitNormal(
-                'mu_phi_scaled',
-                mu=0, sigma=1.5,
-                testval=0.29
+                'mu_phi_scaled', mu=0, sigma=1.5, testval=0.29
             )
-
-            # self.mu_phi_scaled = pm.Uniform(
-            #     'mu_phi_scaled',
-            #     lower=0, upper=1,
-            #     testval=20/90
-            # )
-
             self.mu_phi = pm.Deterministic(
-                'mu_phi',
-                90 * self.mu_phi_scaled
+                'mu_phi', 90 * self.mu_phi_scaled
             )
-
-            # inter-galaxy dispersion
+            # inter-arm dispersion
             self.sigma_phi = pm.InverseGamma(
-                'sigma_phi',
-                alpha=2, beta=20,
-                testval=5
+                'sigma_phi', alpha=2, beta=20, testval=5
             )
-
             # arm offset parameter
             self.c = pm.Cauchy(
-                'c',
-                alpha=0, beta=10,
-                shape=self.n_arms,
+                'c', alpha=0, beta=10, shape=self.n_arms,
                 testval=np.tile(0, self.n_arms)
             )
-
             # radial noise
             self.sigma_r = pm.InverseGamma('sigma_r', alpha=2, beta=0.5)
-
-        # Define Dependent variables
-        with self.model:
-            # we want this:
             self.phi_arm = pm.TruncatedNormal(
                 'phi_arm',
                 mu=self.mu_phi, sd=self.sigma_phi,
-                lower=0, upper=90,
-                shape=self.n_arms,
+                lower=0, upper=90, shape=self.n_arms,
             )
-            # # Specified in a non-centred way:
-            # self.phi_arm_offset = pm.Normal(
-            #     'phi_arm_offset',
-            #     mu=0, sd=1, shape=self.n_arms,
-            # )
-            # self.phi_arm = pm.Deterministic(
-            #     'phi_arm',
-            #     self.mu_phi + self.phi_arm_offset * self.sigma_phi
-            # )
-
-            # self.phi_arm_scaled = pm.LogitNormal(
-            #     'phi_arm_scaled',
-            #     mu=self.mu_phi_scaled, sigma=self.sigma_phi / 90,
-            #     shape=self.n_arms,
-            # )
-            #
-            # self.phi_arm = pm.Deterministic(
-            #     'phi_arm',
-            #     self.phi_arm_scaled * 90
-            # )
-
             # convert to a gradient for a linear fit
             self.b = tt.tan(np.pi / 180 * self.phi_arm)
             r = tt.exp(
                 self.b[self.data['arm_index'].values] * self.data['theta']
                 + self.c[self.data['arm_index'].values]
             )
-
-            # use Potentials for truncation, pm.Potential('foo', N) simply
-            # adds N to the log likelihood, so combining with a theano switch
-            # allows us to bound variables, at the cost of losing model
-            # normalization
-            # pm.Potential(
-            #     'phi_arm_bound',
-            #     (
-            #         tt.switch(tt.all(self.phi_arm > 0), 0, -np.inf)
-            #         + tt.switch(tt.all(self.phi_arm < 90), 0, -np.inf)
-            #     )
-            # )
-            # pm.Potential(
-            #     'r_bound',
-            #     tt.switch(tt.all(r < 1E4), 0, -np.inf)
-            # )
-
             # likelihood function
             self.likelihood = pm.Normal(
                 'Likelihood',
@@ -196,3 +136,80 @@ class BHSM():
                 ]
             )
         return mean_field
+
+
+# for the posterior predictive comparison
+class CotUniformBHSM(BHSM):
+    def build_model(self, name='cot_normal_model'):
+        # Define Stochastic variables
+        with pm.Model(name=name) as self.model:
+            self.cot_phi = pm.Uniform(
+                'cot_phi_gal',
+                lower=1, upper=4,
+                shape=self.n_arms
+            )
+            self.phi_gal = pm.Deterministic(
+                'phi_gal', 180 / np.pi * tt.arctan(1 / self.cot_phi)
+            )
+            # note we don't model inter-galaxy dispersion here
+            # intra-galaxy dispersion
+            self.sigma_gal = pm.InverseGamma(
+                'sigma_gal',
+                alpha=2, beta=20, testval=5
+            )
+            # arm offset parameter
+            self.c = pm.Cauchy(
+                'c',
+                alpha=0, beta=10,
+                shape=self.n_arms,
+                testval=np.tile(0, self.n_arms)
+            )
+
+            # radial noise
+            self.sigma_r = pm.InverseGamma('sigma_r', alpha=2, beta=0.5)
+
+            # Define Dependent variables
+            self.phi_arm = pm.TruncatedNormal(
+                'phi_arm',
+                mu=self.phi_gal[self.gal_arm_map], sd=self.sigma_gal,
+                lower=0, upper=90,
+                shape=self.n_arms
+            )
+
+            # convert to a gradient for a linear fit
+            self.b = tt.tan(np.pi / 180 * self.phi_arm)
+            r = tt.exp(
+                self.b[self.data['arm_index'].values] * self.data['theta']
+                + self.c[self.data['arm_index'].values]
+            )
+
+            # likelihood function
+            self.likelihood = pm.Normal(
+                'Likelihood',
+                mu=r,
+                sigma=self.sigma_r,
+                observed=self.data['r'],
+            )
+
+
+def get_gal_pas(trace, galaxies, gal_arm_map, name=''):
+    if type(galaxies) is not Series:
+        galaxies = Series(galaxies)
+    if name == '':
+        arm_pas = trace[f'phi_arm']
+    else:
+        arm_pas = trace[f'{name}_phi_arm']
+    gal_pas = Series(index=galaxies.index, dtype=object)
+    for i, j in enumerate(gal_pas.index):
+        arm_mask = gal_arm_map == j
+        weights = list(map(lambda l: l.shape[1], galaxies.loc[j]))
+        assert len(weights) == sum(arm_mask.astype(int))
+        gal_pas.loc[j] = np.average(
+            arm_pas.T[arm_mask],
+            weights=weights,
+            axis=0,
+        )
+    gal_pas = gal_pas.apply(Series)
+    gal_pas.columns = gal_pas.columns.rename('sample')
+    gal_pas.index = gal_pas.index.rename('galaxy')
+    return gal_pas
