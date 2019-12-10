@@ -76,5 +76,5 @@ Parameters used to create this sample were <span style="color:red">$\mu_\mathrm{
 
 This model has not yet been run successfully. Currently we are pre-selecting galaxies with two or more spiral arms. Examples of galaxies:
 
-![](./plots/prediction_comparison.png)
-![](./plots/trace.png)
+![](./plots_n296d1000t500/prediction_comparison.png)
+![](./plots_n296d1000t500/trace.png)

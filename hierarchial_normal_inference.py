@@ -4,10 +4,7 @@ import numpy as np
 import pandas as pd
 import pymc3 as pm
 import warnings
-from super_simple.hierarchial_model import HierarchialNormalBHSM, CotUniformBHSM
-
-cot = lambda phi: 1 / np.tan(np.radians(phi))
-acot = lambda a: np.degrees(np.arctan(1 / a))
+from super_simple.hierarchial_model import HierarchialNormalBHSM
 
 
 def generate_sample(N_GALS=None, seed=None):
@@ -15,32 +12,22 @@ def generate_sample(N_GALS=None, seed=None):
         np.random.seed(seed)
 
     # sample extraction
-    galaxies_df = pd.read_pickle('lib/spiral_arms.pickle')
+    galaxies_df = pd.read_pickle('lib/spiral_arms.pickle')\
+        .drop('pipeline', axis=1)
     # keep only galaxies with one arm or more
     galaxies_df = galaxies_df[galaxies_df.notna().any(axis=1)]
     # We want to scale r to have unit variance
     # get all the radial points and calculate their std
     normalization = np.concatenate(
-        galaxies_df.drop('pipeline', axis=1)
-        .T.unstack().dropna().apply(lambda a: a.R).values
+        galaxies_df.T.unstack().dropna().apply(lambda a: a.R).values
     ).std()
     galaxies = pd.Series([
         [
             np.array((arm.t * arm.chirality, arm.R / normalization))
             for arm in galaxy.dropna()
         ]
-        for _, galaxy in galaxies_df.drop('pipeline', axis=1).iterrows()
+        for _, galaxy in galaxies_df.iterrows()
     ], index=galaxies_df.index)
-
-    # restrict to galaxies with pitch angles between cot(4) and cot(1)
-    gal_pas = galaxies_df.apply(
-        lambda row: row['pipeline'].get_pitch_angle(row.dropna().values[1:])[0],
-        axis=1
-    ).reindex_like(galaxies)
-
-    cot_mask = (gal_pas > acot(4)) & (gal_pas < acot(1))
-    galaxies = galaxies[cot_mask]
-
     if N_GALS is not None and N_GALS > 0 and N_GALS < len(galaxies):
         galaxies = galaxies.iloc[
             np.random.choice(
@@ -68,45 +55,44 @@ if __name__ == '__main__':
     parser.add_argument('--ndraws', default=1000, type=int,
                         help='Number of posterior draws to take')
     parser.add_argument('--output', '-o', metavar='/path/to/file.pickle',
-                        default='cot_uniform_bayes_factor.pickle',
+                        default='',
                         help='Where to save output dump')
 
     args = parser.parse_args()
 
     # generate a sample using the helper function
     galaxies = generate_sample(args.ngals, seed=0)
-
-    # initialize the models using the custom BHSM class
-    bhsm = HierarchialNormalBHSM(galaxies.values)
-
-    with bhsm.model as model:
-        step = pm.smc.SMC()
-
-        mtrace = pm.smc.sample_smc(
-            step=step,
+    if args.output == '':
+        args.output = 'n{}d{}t{}.pickle'.format(
+            args.ngals or len(galaxies),
+            args.ndraws,
+            args.ntune,
         )
 
-    cot_uniform_bhsm = CotUniformBHSM(galaxies.values)
-    with cot_uniform_bhsm.model as model:
-        step = pm.smc.SMC()
+    # initialize the model using the custom BHSM class
+    bhsm = HierarchialNormalBHSM(galaxies)
+    print(bhsm.data.describe())
 
-        cot_uniform_trace = pm.smc.sample_smc(
-            step=step,
-        )
-
-    bf = (
-        bhsm.model.marginal_likelihood
-        / cot_uniform_bhsm.model.marginal_likelihood
+    trace = bhsm.do_inference(
+        draws=args.ndraws,
+        tune=args.ntune,
+        # backend='saved_gzb_bhsm_trace'
     )
-    print(f'\nBayes Factor: {bf:.4f}')
+
+    divergent = trace['diverging']
+
+    print('Number of Divergent %d' % divergent.nonzero()[0].size)
+    divperc = divergent.nonzero()[0].size / len(trace) * 100
+    print('Percentage of Divergent %.1f' % divperc)
+
+    print('Trace Summary:')
+    print(pm.summary(trace).round(2).sort_values(by='Rhat', ascending=False))
 
     # save EVERYTHING
     with open(args.output, "wb") as buff:
         pickle.dump(
             {
-                'normal_model': bhsm, 'normal_trace': trace,
-                'cot_model': cot_uniform_bhsm, 'cot_trace': cot_uniform_trace,
-                'bayes_factor': bf,
+                'model': bhsm, 'trace': trace,
                 'n_samples': args.ndraws, 'n_burn': args.ntune
             },
             buff

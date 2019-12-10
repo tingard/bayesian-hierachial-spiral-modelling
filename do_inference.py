@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pymc3 as pm
 import warnings
-from super_simple.hierarchial_model import BHSM
+from super_simple.hierarchial_model import UniformBHSM
 
 
 def generate_sample(N_GALS=None, seed=None):
@@ -59,19 +59,19 @@ if __name__ == '__main__':
                         help='Where to save output dump')
 
     args = parser.parse_args()
+
+    # generate a sample using the helper function
+    galaxies = generate_sample(args.ngals, seed=0)
     if args.output == '':
         args.output = 'n{}d{}t{}.pickle'.format(
-            args.ngals,
+            args.ngals or len(galaxies),
             args.ndraws,
             args.ntune,
         )
-    # generate a sample using the helper function
-    galaxies = generate_sample(args.ngals, seed=0)
 
     # initialize the model using the custom BHSM class
     bhsm = BHSM(galaxies)
     print(bhsm.data.describe())
-
 
     trace = bhsm.do_inference(
         draws=args.ndraws,

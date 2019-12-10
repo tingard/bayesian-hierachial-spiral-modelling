@@ -6,6 +6,8 @@ import pymc3 as pm
 import theano.tensor as tt
 
 
+# Assume Uniform prior on galaxy pitch angle, and arm pitch angle normally
+# distributed around a group mean
 class BHSM():
     def __init__(self, galaxies, build=True):
         """Accepts a list of groups of arm polar coordinates, and builds a
@@ -37,6 +39,7 @@ class BHSM():
         self.data[['arm_index', 'galaxy_index']] = \
             self.data[['arm_index', 'galaxy_index']].astype(int)
 
+        self.point_arm_map = self.data['arm_index'].values
         # assert we do not have any NaNs
         if np.any(self.data.isna()):
             raise ValueError('NaNs present in arm values')
@@ -53,45 +56,8 @@ class BHSM():
         else:
             self.model = None
 
-    def build_model(self, name='normal_model', prefix=''):
-        # Define Stochastic variables
-        with pm.Model(name=name) as self.model:
-            # Global mean pitch angle
-            self.mu_phi_scaled = pm.LogitNormal(
-                'mu_phi_scaled', mu=0, sigma=1.5, testval=0.29
-            )
-            self.mu_phi = pm.Deterministic(
-                'mu_phi', 90 * self.mu_phi_scaled
-            )
-            # inter-arm dispersion
-            self.sigma_phi = pm.InverseGamma(
-                'sigma_phi', alpha=2, beta=20, testval=5
-            )
-            # arm offset parameter
-            self.c = pm.Cauchy(
-                'c', alpha=0, beta=10, shape=self.n_arms,
-                testval=np.tile(0, self.n_arms)
-            )
-            # radial noise
-            self.sigma_r = pm.InverseGamma('sigma_r', alpha=2, beta=0.5)
-            self.phi_arm = pm.TruncatedNormal(
-                'phi_arm',
-                mu=self.mu_phi, sd=self.sigma_phi,
-                lower=0, upper=90, shape=self.n_arms,
-            )
-            # convert to a gradient for a linear fit
-            self.b = tt.tan(np.pi / 180 * self.phi_arm)
-            r = tt.exp(
-                self.b[self.data['arm_index'].values] * self.data['theta']
-                + self.c[self.data['arm_index'].values]
-            )
-            # likelihood function
-            self.likelihood = pm.Normal(
-                'Likelihood',
-                mu=r,
-                sigma=self.sigma_r,
-                observed=self.data['r'],
-            )
+    def build_model(self, name=''):
+        pass
 
     def do_inference(self, draws=1000, tune=500, target_accept=0.85,
                      max_treedepth=20, init='advi+adapt_diag',
@@ -117,36 +83,119 @@ class BHSM():
         return trace
 
     def do_advi(self):
-        if self.model is None:
-            self.build_model()
+        raise NotImplementedError('ADVI is not implemented')
 
-        # it's important we now check the model specification, namely do we
-        # have any problems with logp being undefined?
-        with self.model as model:
-            print(model.check_test_point())
 
-        # Sampling
-        with self.model as model:
-            mean_field = pm.fit(
-                method='advi',
-                callbacks=[
-                    pm.callbacks.CheckParametersConvergence(
-                        diff='absolute'
-                    )
-                ]
+class UniformBHSM(BHSM):
+    def build_model(self, name=''):
+        # Define Stochastic variables
+        with pm.Model(name=name) as self.model:
+            # Global mean pitch angle
+            self.phi_gal = pm.Uniform(
+                'phi_gal',
+                lower=0, upper=90,
+                shape=len(self.galaxies)
             )
-        return mean_field
+            # note we don't model inter-galaxy dispersion here
+            # intra-galaxy dispersion
+            self.sigma_gal = pm.InverseGamma(
+                'sigma_gal',
+                alpha=2, beta=20, testval=5
+            )
+            # arm offset parameter
+            self.c = pm.Cauchy(
+                'c',
+                alpha=0, beta=10,
+                shape=self.n_arms,
+                testval=np.tile(0, self.n_arms)
+            )
+
+            # radial noise
+            self.sigma_r = pm.InverseGamma('sigma_r', alpha=2, beta=0.5)
+
+            # Define Dependent variables
+            self.phi_arm = pm.TruncatedNormal(
+                'phi_arm',
+                mu=self.phi_gal[self.gal_arm_map], sd=self.sigma_gal,
+                lower=0, upper=90,
+                shape=self.n_arms
+            )
+
+            # convert to a gradient for a linear fit
+            self.b = tt.tan(np.pi / 180 * self.phi_arm)
+            r = tt.exp(
+                self.b[self.point_arm_map] * self.data['theta']
+                + self.c[self.point_arm_map]
+            )
+
+            # likelihood function
+            self.likelihood = pm.Normal(
+                'Likelihood',
+                mu=r,
+                sigma=self.sigma_r,
+                observed=self.data['r'],
+            )
+
+
+class HierarchialNormalBHSM(BHSM):
+    def build_model(self, name='normal_model'):
+        # Define Stochastic variables
+        with pm.Model(name=name) as self.model:
+            # Global mean pitch angle
+            self.mu_phi = pm.Uniform(
+                'mu_phi',
+                lower=0, upper=90
+            )
+            self.sigma_phi = pm.InverseGamma(
+                'sigma_phi', alpha=2, beta=15, testval=8
+            )
+            self.sigma_gal = pm.InverseGamma(
+                'sigma_gal', alpha=2, beta=15, testval=8
+            )
+            # define a mean galaxy pitch angle
+            self.phi_gal = pm.TruncatedNormal(
+                'phi_gal',
+                mu=self.mu_phi, sd=self.sigma_phi,
+                lower=0, upper=90, shape=len(self.galaxies),
+            )
+            # draw arm pitch angles centred around this mean
+            self.phi_arm = pm.TruncatedNormal(
+                'phi_arm',
+                mu=self.phi_gal[self.gal_arm_map], sd=self.sigma_gal,
+                lower=0, upper=90,
+                shape=len(self.gal_arm_map),
+            )
+            # convert to a gradient for a linear fit
+            self.b = tt.tan(np.pi / 180 * self.phi_arm)
+            # arm offset parameter
+            self.c = pm.Cauchy(
+                'c', alpha=0, beta=10, shape=self.n_arms,
+                testval=np.tile(0, self.n_arms)
+            )
+            # radial noise
+            self.sigma_r = pm.InverseGamma('sigma_r', alpha=2, beta=0.5)
+            r = tt.exp(
+                self.b[self.point_arm_map] * self.data['theta']
+                + self.c[self.point_arm_map]
+            )
+            # likelihood function
+            self.likelihood = pm.Normal(
+                'Likelihood',
+                mu=r,
+                sigma=self.sigma_r,
+                observed=self.data['r'],
+            )
 
 
 # for the posterior predictive comparison
 class CotUniformBHSM(BHSM):
-    def build_model(self, name='cot_normal_model'):
+    def build_model(self, name='cot_uniform_model'):
         # Define Stochastic variables
         with pm.Model(name=name) as self.model:
             self.cot_phi = pm.Uniform(
                 'cot_phi_gal',
                 lower=1, upper=4,
-                shape=self.n_arms
+                shape=len(self.galaxies)
             )
             self.phi_gal = pm.Deterministic(
                 'phi_gal', 180 / np.pi * tt.arctan(1 / self.cot_phi)

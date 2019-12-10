@@ -27,7 +27,8 @@ def gen_noisy_arm(phi, N=500, t_offset=None,
 
 
 def gen_galaxy(n_arms, pa, sigma_pa, pa_bounds=(0.1, 60), **kwargs):
-    pas = st.truncnorm.rvs(*pa_bounds, loc=pa, scale=sigma_pa, size=n_arms)
+    translated_bounds = (np.array(pa_bounds) - pa) / sigma_pa
+    pas = st.truncnorm.rvs(*translated_bounds, loc=pa, scale=sigma_pa, size=n_arms)
     base_offset = np.random.random() * 2 * np.pi
     return [
         gen_noisy_arm(

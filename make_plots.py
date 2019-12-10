@@ -44,6 +44,11 @@ if not os.path.isdir(args.output):
 bhsm = saved['model']
 galaxies = bhsm.galaxies
 trace = saved['trace']
+# prefix = [i for i in trace.varnames if 'phi_gal' in i][0].replace('phi_gal', '')
+prefix = bhsm.model.name
+prefix += ('_' if len(prefix) > 0 else '')
+print(f'Identified model name "{prefix}"')
+
 n_draws = saved.get('n_draws', 500)
 n_tune = saved.get('n_tune', 500)
 
@@ -73,17 +78,17 @@ with bhsm.model as model:
         trace, samples=100,
         vars=[bhsm.phi_arm, bhsm.c, bhsm.mu_phi, bhsm.sigma_phi]
     )
-pred_pa = param_predictions['phi_arm']
-pred_c = param_predictions['c']
+pred_pa = param_predictions[f'{prefix}phi_arm']
+pred_c = param_predictions[f'{prefix}c']
 
-pred_mu_phi = param_predictions['mu_phi']
-pred_sigma_phi = param_predictions['sigma_phi']
+pred_mu_phi = param_predictions[f'{prefix}mu_phi']
+pred_sigma_phi = param_predictions[f'{prefix}sigma_phi']
 
 
 # PLOTTING
 print('Making plots')
 
-var_names = ('mu_phi', 'sigma_phi', 'sigma_r')
+var_names = (f'{prefix}mu_phi', f'{prefix}sigma_phi', f'{prefix}sigma_r')
 names = (
     r'$\mu_\phi$',
     r'$\sigma_\phi$',
@@ -98,7 +103,7 @@ def plot_sample(galaxies, axs, **kwargs):
     for i, ax in enumerate(axs):
         plt.sca(ax)
         try:
-            for j, arm in enumerate(galaxies[i]):
+            for j, arm in enumerate(galaxies.iloc[i]):
                 o = np.argsort(arm[0])
                 plt.plot(
                     *xy_from_r_theta(arm[1][o], arm[0][o]),
@@ -164,7 +169,7 @@ f, axs_grid = plt.subplots(
     figsize=(16, 16), dpi=100
 )
 axs = [j for i in axs_grid for j in i]
-plot_sample(galaxies[:len(axs)], axs)
+plot_sample(galaxies.iloc[:len(axs)], axs)
 plt.savefig(
     os.path.join(args.output, 'sample.png'),
     bbox_inches='tight'
@@ -179,7 +184,7 @@ f, axs_grid = plt.subplots(
     figsize=(16, 16), dpi=200
 )
 axs = [j for i in axs_grid for j in i]
-plot_sample(galaxies[:len(axs)], axs, alpha=0.6)
+plot_sample(galaxies.iloc[:len(axs)], axs, alpha=0.6)
 
 # plot the posterior predictions
 # for each sample (of 100 drawn samples)
@@ -191,7 +196,7 @@ for i in range(len(pred_pa)):
     for j in range(len(arm_pa)):
         if bhsm.gal_arm_map[j] >= len(axs):
             continue
-        t = bhsm.data['theta'][g].values
+        t = bhsm.data['theta'][i].values
         r_pred = np.exp(arm_b[j] * t + arm_c[j])
         o = np.argsort(t)
         xy = xy_from_r_theta(r_pred[o], t[o])
@@ -206,7 +211,7 @@ for i in range(len(pred_pa)):
 for i, ax in enumerate(axs):
     plt.sca(ax)
     try:
-        for p, arm in zip(gal_separate_fit_params.iloc[i], galaxies[i]):
+        for p, arm in zip(gal_separate_fit_params.iloc[i], galaxies.iloc[i]):
             R_fit = sg.log_spiral(arm[0], p[0])*np.exp(p[1])
             o = np.argsort(arm[0])
             xy = xy_from_r_theta(R_fit[o], arm[0][o])

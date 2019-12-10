@@ -4,8 +4,7 @@ import numpy as np
 import pandas as pd
 import pymc3 as pm
 import warnings
-from super_simple.hierarchial_model import BHSM, CotUniformBHSM
-
+from super_simple.hierarchial_model import HierarchialNormalBHSM, CotUniformBHSM
 
 cot = lambda phi: 1 / np.tan(np.radians(phi))
 acot = lambda a: np.degrees(np.arctan(1 / a))
@@ -23,7 +22,7 @@ def generate_sample(N_GALS=None, seed=None):
     # get all the radial points and calculate their std
     normalization = np.concatenate(
         galaxies_df.drop('pipeline', axis=1)
-            .T.unstack().dropna().apply(lambda a: a.R).values
+        .T.unstack().dropna().apply(lambda a: a.R).values
     ).std()
     galaxies = pd.Series([
         [
@@ -39,7 +38,7 @@ def generate_sample(N_GALS=None, seed=None):
         axis=1
     ).reindex_like(galaxies)
 
-    cot_mask = (gal_pas > cot(4)) & (gal_pas < cot(1))
+    cot_mask = (gal_pas > acot(4)) & (gal_pas < acot(1))
     galaxies = galaxies[cot_mask]
 
     if N_GALS is not None and N_GALS > 0 and N_GALS < len(galaxies):
@@ -78,7 +77,7 @@ if __name__ == '__main__':
     galaxies = generate_sample(args.ngals, seed=0)
 
     # initialize the models using the custom BHSM class
-    bhsm = BHSM(galaxies.values)
+    bhsm = HierarchialNormalBHSM(galaxies.values)
 
     trace = bhsm.do_inference(
         draws=args.ndraws,
