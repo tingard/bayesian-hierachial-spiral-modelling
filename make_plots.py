@@ -1,6 +1,6 @@
 import os
 import sys
-import pickle
+import re
 import numpy as np
 import pandas as pd
 import scipy.stats as st
@@ -25,8 +25,7 @@ parser.add_argument('--output', '-o', metavar='/path/to/directory',
 args = parser.parse_args()
 
 try:
-    with open(args.input, 'rb') as f:
-        saved = pickle.load(f)
+    saved = pd.read_pickle(args.input)
 except IOError:
     print('Invalid input file')
     sys.exit(1)
@@ -44,10 +43,35 @@ if not os.path.isdir(args.output):
 bhsm = saved['model']
 galaxies = bhsm.galaxies
 trace = saved['trace']
-# prefix = [i for i in trace.varnames if 'phi_gal' in i][0].replace('phi_gal', '')
 prefix = bhsm.model.name
 prefix += ('_' if len(prefix) > 0 else '')
-print(f'Identified model name "{prefix}"')
+if len(prefix):
+    print(f'Identified model name "{prefix}"')
+else:
+    print('No model name found')
+
+var_names = [
+    f'{prefix}{i}' for i in ('mu_phi', f'sigma_phi', f'sigma_gal', f'sigma_r')
+    if f'{prefix}{i}' in trace.varnames
+]
+
+
+# do some wrangling to gat latex-friendly names
+def latex_wrangle(s):
+    s = re.sub(
+        r'_(.*?$)', r'_{\1}',
+        re.sub(
+            r'gal', r'\\mathrm{gal}',
+            re.sub(
+                r'(phi|mu|sigma)', r'\\\1',
+                s.replace(prefix, '')
+            )
+        )
+    )
+    return f'${s}$'
+
+
+names = [latex_wrangle(s) for s in var_names]
 
 n_draws = saved.get('n_draws', 500)
 n_tune = saved.get('n_tune', 500)
@@ -75,25 +99,27 @@ print(arm_separate_fit_params.describe())
 print('Getting predictions')
 with bhsm.model as model:
     param_predictions = pm.sample_posterior_predictive(
-        trace, samples=100,
-        vars=[bhsm.phi_arm, bhsm.c, bhsm.mu_phi, bhsm.sigma_phi]
+        trace, samples=20,
+        # [bhsm.phi_arm, bhsm.c, bhsm.mu_phi, bhsm.sigma_phi]
+        var_names=[f'{prefix}{i}' for i in ('phi_arm', 'c', 'mu_phi', 'sigma_phi') if f'{prefix}{i}' in trace.varnames]
     )
+
 pred_pa = param_predictions[f'{prefix}phi_arm']
 pred_c = param_predictions[f'{prefix}c']
 
-pred_mu_phi = param_predictions[f'{prefix}mu_phi']
-pred_sigma_phi = param_predictions[f'{prefix}sigma_phi']
+try:
+    pred_mu_phi = param_predictions[f'{prefix}mu_phi']
+except KeyError:
+    pass
+
+try:
+    pred_sigma_phi = param_predictions[f'{prefix}sigma_phi']
+except KeyError:
+    pass
 
 
 # PLOTTING
 print('Making plots')
-
-var_names = (f'{prefix}mu_phi', f'{prefix}sigma_phi', f'{prefix}sigma_r')
-names = (
-    r'$\mu_\phi$',
-    r'$\sigma_\phi$',
-    r'$\sigma_r$',
-)
 
 
 def plot_sample(galaxies, axs, **kwargs):
@@ -113,6 +139,17 @@ def plot_sample(galaxies, axs, **kwargs):
                 )
         except IndexError:
             pass
+        try:
+            name = galaxies.index[i]
+            ylims = plt.ylim()
+            plt.text(
+                0, ylims[1] - (ylims[1] - ylims[0])*0.02,
+                str(name),
+                horizontalalignment='center'
+            )
+        except AttributeError as e:
+            print(e)
+            pass
 
 
 def traceplot(trace, var_names=[], names=None):
@@ -123,6 +160,8 @@ def traceplot(trace, var_names=[], names=None):
         ncols=2,
         dpi=100
     )
+    if len(ax.shape) < 2:
+        ax = ax[np.newaxis, :]
     for i, p in enumerate(var_names):
         plt.sca(ax[i][0])
         for j in range(trace.nchains):
@@ -196,7 +235,8 @@ for i in range(len(pred_pa)):
     for j in range(len(arm_pa)):
         if bhsm.gal_arm_map[j] >= len(axs):
             continue
-        t = bhsm.data['theta'][i].values
+        t_orig = bhsm.data['theta'][bhsm.data['arm_index'] == j].values
+        t = np.linspace(t_orig.min(), t_orig.max(), 500)
         r_pred = np.exp(arm_b[j] * t + arm_c[j])
         o = np.argsort(t)
         xy = xy_from_r_theta(r_pred[o], t[o])
@@ -250,32 +290,34 @@ except ImportError:
         import sys
         sys.exit(0)
 
-
-print('\tPlotting posterior of pitch angle')
-plt.figure(figsize=(12, 4), dpi=100)
-x = np.linspace(0, 90, 1000)
-ys = [
-    st.norm.pdf(x, loc=pred_mu_phi[i], scale=pred_sigma_phi[i])
-    for i in range(len(pred_mu_phi))
-]
-y = np.add.reduce(ys, axis=0) / len(ys)
-plt.fill_between(
-    x, np.zeros(len(x)), y,
-    color='r', alpha=0.5
-)
-plt.plot(x, y, 'r', label='Hierarchial model')
-# for i in range(len(pred_mu_phi)):
-#     y = st.norm.pdf(x, loc=pred_mu_phi[i], scale=pred_sigma_phi[i])
-#     plt.fill_between(
-#         x, np.zeros(len(x)), y,
-#         color='k', alpha=1/len(pred_mu_phi)
-#     )
-empirical_dist = st.norm.pdf(
-    x,
-    loc=arm_separate_fit_params['pa'].mean(),
-    scale=arm_separate_fit_params['pa'].std(),
-)
-plt.plot(x, empirical_dist, 'k--', label='Separately fit pitch angle')
-plt.legend()
-plt.savefig(os.path.join(args.output, 'pa_realizations.png'), bbox_inches='tight')
-plt.close()
+try:
+    print('\tPlotting posterior of pitch angle')
+    plt.figure(figsize=(12, 4), dpi=100)
+    x = np.linspace(0, 90, 1000)
+    ys = [
+        st.norm.pdf(x, loc=pred_mu_phi[i], scale=pred_sigma_phi[i])
+        for i in range(len(pred_mu_phi))
+    ]
+    y = np.add.reduce(ys, axis=0) / len(ys)
+    plt.fill_between(
+        x, np.zeros(len(x)), y,
+        color='r', alpha=0.5
+    )
+    plt.plot(x, y, 'r', label='Hierarchial model')
+    # for i in range(len(pred_mu_phi)):
+    #     y = st.norm.pdf(x, loc=pred_mu_phi[i], scale=pred_sigma_phi[i])
+    #     plt.fill_between(
+    #         x, np.zeros(len(x)), y,
+    #         color='k', alpha=1/len(pred_mu_phi)
+    #     )
+    empirical_dist = st.norm.pdf(
+        x,
+        loc=arm_separate_fit_params['pa'].mean(),
+        scale=arm_separate_fit_params['pa'].std(),
+    )
+    plt.plot(x, empirical_dist, 'k--', label='Separately fit pitch angle')
+    plt.legend()
+    plt.savefig(os.path.join(args.output, 'pa_realizations.png'), bbox_inches='tight')
+    plt.close()
+except NameError:
+    pass

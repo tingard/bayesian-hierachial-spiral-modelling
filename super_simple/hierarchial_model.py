@@ -124,8 +124,8 @@ class UniformBHSM(BHSM):
             # convert to a gradient for a linear fit
             self.b = tt.tan(np.pi / 180 * self.phi_arm)
             r = tt.exp(
-                self.b[self.point_arm_map] * self.data['theta']
-                + self.c[self.point_arm_map]
+                self.b[self.data['arm_index'].values] * self.data['theta']
+                + self.c[self.data['arm_index'].values]
             )
 
             # likelihood function
