@@ -7,9 +7,11 @@ def generate_sample(n_gals=None, seed=None, pa_filter=lambda a: True):
         np.random.seed(seed)
 
     # sample extraction
-    galaxies_df = pd.read_pickle('lib/unweighted_spirals.pickle')
+    galaxies_df = pd.read_pickle('lib/merged_arms.pickle')
+
+    n_arms = galaxies_df.drop('pipeline', axis=1).apply(lambda a: len(a.dropna()), axis=1)
     # keep only galaxies with one arm or more
-    galaxies_df = galaxies_df[galaxies_df.apply(lambda a: len(a.dropna()) > 1, axis=1)]
+    galaxies_df = galaxies_df[n_arms > 1]
 
     # We want to scale r to have unit variance
     # get all the radial points and calculate their std
