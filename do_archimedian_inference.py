@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pymc3 as pm
 import warnings
-from super_simple.hierarchial_model import UniformBHSM
+from super_simple.hierarchial_model import ArchimedianBHSM
 import generate_sample
 
 
@@ -17,9 +17,9 @@ parser = argparse.ArgumentParser(
 )
 parser.add_argument('--ngals', '-N', default=None, type=int,
                     help='Number of galaxies in sample')
-parser.add_argument('--ntune', default=500, type=int,
+parser.add_argument('--ntune', default=2000, type=int,
                     help='Number of tuning steps to take')
-parser.add_argument('--ndraws', default=1000, type=int,
+parser.add_argument('--ndraws', default=20000, type=int,
                     help='Number of posterior draws to take')
 parser.add_argument('--output', '-o', metavar='/path/to/file.pickle',
                     default='',
@@ -31,25 +31,27 @@ args = parser.parse_args()
 galaxies = generate_sample.generate_sample(n_gals=args.ngals, seed=0)
 
 if args.output == '':
-    args.output = 'n{}d{}t{}.pickle'.format(
+    args.output = 'archimedian_n{}d{}t{}.pickle'.format(
         args.ngals or len(galaxies),
         args.ndraws,
         args.ntune,
     )
 
 # initialize the model using the custom BHSM class
-bhsm = UniformBHSM(galaxies)
+bhsm = ArchimedianBHSM(galaxies)
 
 trace = bhsm.do_inference(
     draws=args.ndraws,
     tune=args.ntune,
 )
 
-divergent = trace['diverging']
-
-print('Number of Divergent %d' % divergent.nonzero()[0].size)
-divperc = divergent.nonzero()[0].size / len(trace) * 100
-print('Percentage of Divergent %.1f' % divperc)
+try:
+    divergent = trace['diverging']
+    print('Number of Divergent %d' % divergent.nonzero()[0].size)
+    divperc = divergent.nonzero()[0].size / len(trace) * 100
+    print('Percentage of Divergent %.1f' % divperc)
+except KeyError:
+    pass
 
 print('Trace Summary:')
 print(pm.summary(trace).round(2).sort_values(by='r_hat', ascending=False))

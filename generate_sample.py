@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import warnings
 
 
 def generate_sample(n_gals=None, seed=None, pa_filter=lambda a: True):
@@ -11,7 +12,7 @@ def generate_sample(n_gals=None, seed=None, pa_filter=lambda a: True):
 
     n_arms = galaxies_df.drop('pipeline', axis=1).apply(lambda a: len(a.dropna()), axis=1)
     # keep only galaxies with one arm or more
-    galaxies_df = galaxies_df[n_arms > 1]
+    galaxies_df = galaxies_df[n_arms > 0]
 
     # We want to scale r to have unit variance
     # get all the radial points and calculate their std

@@ -241,6 +241,111 @@ class CotUniformBHSM(BHSM):
             )
 
 
+class ArchimedianBHSM(BHSM):
+    r"""This model fits archimedian spirals, rather than the logarithmic spirals
+    present in other models. There is no assumed relationship between arms.
+
+    An Archimedian spiral is given by
+
+    $$r = a\theta^{1/n}$$
+
+    Here we constrain $n$ to be the same for all arms, and add a rotation
+    paramter $\delta\theta$
+
+    $$r = a\left(\theta + \delta\theta\right)^{m}$$
+
+    """
+
+    def build_model(self, n=None, name='archimedian_model'):
+        with pm.Model(name=name) as self.model:
+            if n is None:
+                self.n_choice = pm.Categorical(
+                    'n_choice',
+                    [1, 1, 0, 1, 1],
+                    testval=1,
+                    shape=len(self.galaxies)
+                )
+                self.n = pm.Deterministic('n', self.n_choice - 2)
+            else:
+                msg = 'Parameter $n$ must be a nonzero float'
+                try:
+                    n = float(n)
+                except ValueError:
+                    pass
+                finally:
+                    assert isinstance(n, float) and n != 0, msg
+
+                self.n_choice = None
+                self.n = n
+            print(self.n, n)
+            self.chirality_correction = tt.switch(self.n < 0, -1, 1)
+            self.a = pm.HalfCauchy(
+                'a',
+                beta=1, testval=1,
+                shape=self.n_arms
+            )
+            self.psi = pm.Normal(
+                'psi',
+                mu=0, sigma=1, testval=0.1,
+                shape=self.n_arms,
+            )
+            self.sigma_r = pm.InverseGamma(
+                'sigma_r',
+                alpha=2, beta=0.5
+            )
+            # Unfortunately, as we need to reverse the theta points for arms
+            # with n < 1, we need to do some model-mangling
+            r_stack = [
+                self.a[i]
+                * tt.power(
+                    self.data.query('arm_index == @i')['theta'].values + self.psi[i],
+                    1 / self.n[
+                        int(self.data.query('arm_index == @i')['galaxy_index'].mean())
+                    ]
+                )[::self.chirality_correction[
+                    int(self.data.query('arm_index == @i')['galaxy_index'].mean())]
+                ]
+                for i in np.unique(self.data['arm_index'])
+            ]
+            r = tt.concatenate(r_stack)
+            self.likelihood = pm.Normal(
+                'Likelihood',
+                mu=r,
+                sigma=self.sigma_r,
+                observed=self.data['r'].values,
+            )
+
+    def do_inference(self, draws=20000, tune=2000, init='adapt_diag', **kwargs):
+        if self.model is None:
+            self.build_model()
+
+        # it's important we now check the model specification, namely do we
+        # have any problems with logp being undefined?
+        with self.model as model:
+            print(model.check_test_point())
+
+        # Sampling
+        with self.model as model:
+            if self.n_choice is not None:
+                step1 = pm.CategoricalGibbsMetropolis(self.n_choice)
+                step2 = pm.Metropolis([self.a, self.psi, self.sigma_r])
+                trace = pm.sample(
+                    draws=draws,
+                    tune=tune,
+                    init=init,
+                    step=[step1, step2],
+                    **kwargs
+                )
+            else:
+                trace = pm.sample(
+                    draws=draws,
+                    tune=tune,
+                    init=init,
+                    **kwargs
+                )
+        return trace
+
+
 def get_gal_pas(trace, galaxies, gal_arm_map, name=''):
     if type(galaxies) is not Series:
         galaxies = Series(galaxies)
