@@ -1,4 +1,5 @@
 import os
+import sys
 import shutil
 import numpy as np
 from pandas import Series, DataFrame
@@ -266,6 +267,7 @@ class ArchimedianBHSM(BHSM):
                     shape=len(self.galaxies)
                 )
                 self.n = pm.Deterministic('n', self.n_choice - 2)
+                self.chirality_correction = tt.switch(self.n < 0, -1, 1)
             else:
                 msg = 'Parameter $n$ must be a nonzero float'
                 try:
@@ -276,8 +278,8 @@ class ArchimedianBHSM(BHSM):
                     assert isinstance(n, float) and n != 0, msg
 
                 self.n_choice = None
-                self.n = n
-            print(self.n, n)
+                self.n = pm.Deterministic('n', np.repeat(n, len(self.galaxies)))
+
             self.chirality_correction = tt.switch(self.n < 0, -1, 1)
             self.a = pm.HalfCauchy(
                 'a',
@@ -308,7 +310,7 @@ class ArchimedianBHSM(BHSM):
                 for i in np.unique(self.data['arm_index'])
             ]
             r = tt.concatenate(r_stack)
-            self.likelihood = pm.Normal(
+            self.likelihood = pm.StudentT(
                 'Likelihood',
                 mu=r,
                 sigma=self.sigma_r,
@@ -322,7 +324,17 @@ class ArchimedianBHSM(BHSM):
         # it's important we now check the model specification, namely do we
         # have any problems with logp being undefined?
         with self.model as model:
-            print(model.check_test_point())
+            test_point = model.check_test_point()
+
+            if len(self.model.name) > 0:
+                l_key = self.model.name + '_'
+            else:
+                l_key = ''
+
+        print(test_point)
+        if np.isnan(test_point['{}Likelihood'.format(l_key)]):
+            print('The model\'s test point had an undefined likelihood, meaning sampling will fail')
+            sys.exit(0)
 
         # Sampling
         with self.model as model:

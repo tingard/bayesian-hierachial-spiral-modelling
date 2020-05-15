@@ -19,7 +19,7 @@ parser.add_argument('--ngals', '-N', default=None, type=int,
                     help='Number of galaxies in sample')
 parser.add_argument('--ntune', default=2000, type=int,
                     help='Number of tuning steps to take')
-parser.add_argument('--ndraws', default=20000, type=int,
+parser.add_argument('--ndraws', default=5000, type=int,
                     help='Number of posterior draws to take')
 parser.add_argument('--output', '-o', metavar='/path/to/file.pickle',
                     default='',
@@ -28,7 +28,8 @@ parser.add_argument('--output', '-o', metavar='/path/to/file.pickle',
 args = parser.parse_args()
 
 # generate a sample using the helper function
-galaxies = generate_sample.generate_sample(n_gals=args.ngals, seed=0)
+# galaxies = generate_sample.generate_sample(n_gals=args.ngals, seed=0)
+galaxies = pd.read_pickle('test_20_gal_sample.pkl.gz')
 
 if args.output == '':
     args.output = 'archimedian_n{}d{}t{}.pickle'.format(
@@ -38,29 +39,21 @@ if args.output == '':
     )
 
 # initialize the model using the custom BHSM class
-bhsm = ArchimedianBHSM(galaxies)
+bhsm = ArchimedianBHSM(galaxies, build=False)
 
-trace = bhsm.do_inference(
-    draws=args.ndraws,
-    tune=args.ntune,
-)
-
-try:
-    divergent = trace['diverging']
-    print('Number of Divergent %d' % divergent.nonzero()[0].size)
-    divperc = divergent.nonzero()[0].size / len(trace) * 100
-    print('Percentage of Divergent %.1f' % divperc)
-except KeyError:
-    pass
-
-print('Trace Summary:')
-print(pm.summary(trace).round(2).sort_values(by='r_hat', ascending=False))
+traces = {}
+for n in [1, 2]:
+    bhsm.build_model(n=n)
+    traces[n] = bhsm.do_inference(
+        draws=args.ndraws,
+        tune=args.ntune,
+    )
 
 # save EVERYTHING
 with open(args.output, "wb") as buff:
     pickle.dump(
         {
-            'model': bhsm, 'trace': trace,
+            'model': bhsm, 'trace': traces,
             'n_samples': args.ndraws, 'n_burn': args.ntune
         },
         buff
