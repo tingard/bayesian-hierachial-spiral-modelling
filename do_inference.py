@@ -1,5 +1,6 @@
-import pickle
 import os
+import sys
+import pickle
 import numpy as np
 import pandas as pd
 import pymc3 as pm
@@ -39,6 +40,9 @@ if args.output == '':
 
 # initialize the model using the custom BHSM class
 bhsm = UniformBHSM(galaxies)
+
+pm.model_to_graphviz(bhsm.model).view('plots/model_graphviz.pdf')
+sys.exit(0)
 
 trace = bhsm.do_inference(
     draws=args.ndraws,

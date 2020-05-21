@@ -15,12 +15,12 @@ class BHSM():
         PYMC3 hierarchial model to infer global distributions of pitch angle
         """
         self.galaxies = galaxies
-        self.gal_n_arms = [len(g) for g in galaxies]
-        self.n_arms = sum(self.gal_n_arms)
+        self.gal_n_arms = gal_n_arms = galaxies.apply(len)
+        self.n_arms = self.gal_n_arms.sum()
         # map from arm to galaxy (so gal_arm_map[5] = 3 means the 5th arm is
         # from the 3rd galaxy)
         self.gal_arm_map = np.concatenate([
-            np.tile(i, n) for i, n in enumerate(self.gal_n_arms)
+            np.tile(i, n) for i, n in enumerate(self.gal_n_arms.values)
         ])
         # Create an array containing needed information in a stacked form
         self.data = DataFrame(
@@ -28,7 +28,7 @@ class BHSM():
                 np.stack((
                     arm_T,
                     arm_R,
-                    np.tile(sum(self.gal_n_arms[:gal_n]) + arm_n, len(arm_T)),
+                    np.tile(sum(self.gal_n_arms.iloc[:gal_n]) + arm_n, len(arm_T)),
                     np.tile(gal_n, len(arm_T))
                 ), axis=-1)
                 for gal_n, galaxy in enumerate(galaxies)
@@ -46,18 +46,22 @@ class BHSM():
             raise ValueError('NaNs present in arm values')
 
         # ensure the arm indexing makes sense
-        assert np.all(
+        indexing_sensible = np.all(
             (
                 np.unique(self.data['arm_index'])
-                - np.arange(sum(self.gal_n_arms))
+                - np.arange(self.n_arms)
             ) == 0
         )
-        if build:
+        assert indexing_sensible, 'Something went wrong with arm indexing'
+
+        if build is True:
             self.build_model()
         else:
             self.model = None
 
     def build_model(self, name=''):
+        """Function to be overwritten by specific subclass of BHSM
+        """
         pass
 
     def do_inference(self, draws=1000, tune=500, target_accept=0.85,
@@ -124,10 +128,10 @@ class UniformBHSM(BHSM):
 
             # convert to a gradient for a linear fit
             self.b = tt.tan(np.pi / 180 * self.phi_arm)
-            r = tt.exp(
+            r = pm.Deterministic('r', tt.exp(
                 self.b[self.data['arm_index'].values] * self.data['theta']
                 + self.c[self.data['arm_index'].values]
-            )
+            ))
 
             # likelihood function
             self.likelihood = pm.Normal(
@@ -175,10 +179,10 @@ class HierarchialNormalBHSM(BHSM):
             )
             # radial noise
             self.sigma_r = pm.InverseGamma('sigma_r', alpha=2, beta=0.5)
-            r = tt.exp(
+            r = pm.Deterministic('r', tt.exp(
                 self.b[self.point_arm_map] * self.data['theta']
                 + self.c[self.point_arm_map]
-            )
+            ))
             # likelihood function
             self.likelihood = pm.Normal(
                 'Likelihood',
@@ -228,10 +232,10 @@ class CotUniformBHSM(BHSM):
 
             # convert to a gradient for a linear fit
             self.b = tt.tan(np.pi / 180 * self.phi_arm)
-            r = tt.exp(
+            r = pm.Deterministic('r', tt.exp(
                 self.b[self.data['arm_index'].values] * self.data['theta']
                 + self.c[self.data['arm_index'].values]
-            )
+            ))
 
             # likelihood function
             self.likelihood = pm.Normal(
@@ -260,6 +264,7 @@ class ArchimedianBHSM(BHSM):
     def build_model(self, n=None, name='archimedian_model'):
         with pm.Model(name=name) as self.model:
             if n is None:
+                # one n per galaxy, or per arm?
                 self.n_choice = pm.Categorical(
                     'n_choice',
                     [1, 1, 0, 1, 1],
@@ -296,20 +301,25 @@ class ArchimedianBHSM(BHSM):
                 alpha=2, beta=0.5
             )
             # Unfortunately, as we need to reverse the theta points for arms
-            # with n < 1, we need to do some model-mangling
+            # with n < 1, and rotate all arms to start at theta = 0,
+            # we need to do some model-mangling
+            self.t_mins = Series({
+                i: self.data.query('arm_index == @i')['theta'].min()
+                for i in np.unique(self.data['arm_index'])
+            })
             r_stack = [
                 self.a[i]
                 * tt.power(
-                    self.data.query('arm_index == @i')['theta'].values + self.psi[i],
-                    1 / self.n[
-                        int(self.data.query('arm_index == @i')['galaxy_index'].mean())
-                    ]
-                )[::self.chirality_correction[
-                    int(self.data.query('arm_index == @i')['galaxy_index'].mean())]
-                ]
+                    (
+                        self.data.query('arm_index == @i')['theta'].values
+                        - self.t_mins[i]
+                        + self.psi[i]
+                    ),
+                    1 / self.n[int(self.gal_arm_map[i])]
+                )[::self.chirality_correction[int(self.gal_arm_map[i])]]
                 for i in np.unique(self.data['arm_index'])
             ]
-            r = tt.concatenate(r_stack)
+            r = pm.Deterministic('r', tt.concatenate(r_stack))
             self.likelihood = pm.StudentT(
                 'Likelihood',
                 mu=r,
