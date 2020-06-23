@@ -145,7 +145,7 @@ def plot_sample(galaxies, axs, **kwargs):
             plt.text(
                 0, ylims[1] - (ylims[1] - ylims[0])*0.02,
                 str(name),
-                horizontalalignment='center'
+                horizontalalignment='centre'
             )
         except AttributeError as e:
             print(e)
