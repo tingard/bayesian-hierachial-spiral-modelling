@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 import pymc3 as pm
 import warnings
-from super_simple.hierarchial_model import UniformBHSM
+from super_simple.hierarchial_model import RobustUniformBHSM
 import generate_sample
 
 
@@ -32,17 +32,17 @@ args = parser.parse_args()
 galaxies = generate_sample.generate_sample(n_gals=args.ngals, seed=0)
 
 if args.output == '':
-    args.output = 'n{}d{}t{}.pickle'.format(
+    args.output = 'robust_n{}d{}t{}.pickle'.format(
         args.ngals or len(galaxies),
         args.ndraws,
         args.ntune,
     )
 
 # initialize the model using the custom BHSM class
-bhsm = UniformBHSM(galaxies)
+bhsm = RobustUniformBHSM(galaxies)
 
-pm.model_to_graphviz(bhsm.model).view('plots/model_graphviz.pdf')
-sys.exit(0)
+# pm.model_to_graphviz(bhsm.model).view('plots/model_graphviz.pdf')
+# sys.exit(0)
 
 trace = bhsm.do_inference(
     draws=args.ndraws,

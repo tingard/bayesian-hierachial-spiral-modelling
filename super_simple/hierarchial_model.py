@@ -142,6 +142,61 @@ class UniformBHSM(BHSM):
             )
 
 
+class RobustUniformBHSM(BHSM):
+    def build_model(self, name=''):
+        # Define Stochastic variables
+        with pm.Model(name=name) as self.model:
+            # Global mean pitch angle
+            self.phi_gal = pm.Uniform(
+                'phi_gal',
+                lower=0, upper=90,
+                shape=len(self.galaxies)
+            )
+            # note we don't model inter-galaxy dispersion here
+            # intra-galaxy dispersion
+            self.sigma_gal = pm.InverseGamma(
+                'sigma_gal',
+                alpha=2, beta=20, testval=5
+            )
+            # arm offset parameter
+            self.c = pm.Cauchy(
+                'c',
+                alpha=0, beta=10,
+                shape=self.n_arms,
+                testval=np.tile(0, self.n_arms)
+            )
+
+            # radial noise
+            self.sigma_r = pm.InverseGamma('sigma_r', alpha=2, beta=0.5)
+
+            # define prior for Student T degrees of freedom
+            # self.nu = pm.Uniform('nu', lower=1, upper=100)
+
+            # Define Dependent variables
+            self.phi_arm = pm.TruncatedNormal(
+                'phi_arm',
+                mu=self.phi_gal[self.gal_arm_map], sd=self.sigma_gal,
+                lower=0, upper=90,
+                shape=self.n_arms
+            )
+
+            # convert to a gradient for a linear fit
+            self.b = tt.tan(np.pi / 180 * self.phi_arm)
+            r = pm.Deterministic('r', tt.exp(
+                self.b[self.data['arm_index'].values] * self.data['theta']
+                + self.c[self.data['arm_index'].values]
+            ))
+
+            # likelihood function
+            self.likelihood = pm.StudentT(
+                'Likelihood',
+                mu=r,
+                sigma=self.sigma_r,
+                nu=1, #self.nu,
+                observed=self.data['r'],
+            )
+
+
 class HierarchialNormalBHSM(BHSM):
     def build_model(self, name='normal_model'):
         # Define Stochastic variables
